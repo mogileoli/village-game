@@ -18,12 +18,14 @@ var _buildings_saved := 0
 @onready var _map: MapView = $Map
 @onready var _dragon: DragonView = $Map/Dragon
 @onready var _villagers: VillagersView = $Map/Actors/Villagers
-@onready var _camera: Camera2D = $Camera
+@onready var _camera: CameraController = $Camera
 @onready var _hud: Hud = $HUD
 
 
 func _ready() -> void:
-	_hud.tool_selected.connect(func(tool: StringName) -> void: _active_tool = tool)
+	_hud.tool_selected.connect(func(tool: StringName) -> void:
+		_active_tool = tool
+		_camera.left_drag_pans = tool == &"")
 	_hud.save_requested.connect(_save_game)
 	_hud.load_requested.connect(_load_game)
 	_hud.menu_toggled.connect(_on_menu_toggled)
@@ -90,10 +92,11 @@ func _process(delta: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if _menu_open:
 		return
-	if event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_LEFT:
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_use_tool(_map.cell_at_mouse())
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
+		elif event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
+			# On release, so dragging with the right button to move the map keeps the tool.
 			_hud.clear_tool()
 	elif (
 		event is InputEventMouseMotion
