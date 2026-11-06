@@ -1,0 +1,4 @@
+.godot/
+build/*
+!build/.gdignore
+.DS_Store

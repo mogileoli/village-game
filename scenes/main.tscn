@@ -1,0 +1,294 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/game/main.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/game/map_view.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/game/camera_controller.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/game/hud.gd" id="4"]
+[ext_resource type="Texture2D" path="res://assets/ui/cursor.png" id="5"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_wood.png" id="6"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_food.png" id="7"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_people.png" id="8"]
+[ext_resource type="Script" path="res://scripts/game/dragon_view.gd" id="9"]
+[ext_resource type="Texture2D" path="res://assets/tiles/dragon.png" id="10"]
+[ext_resource type="Texture2D" path="res://assets/tiles/dragon_shadow.png" id="11"]
+[ext_resource type="Texture2D" path="res://assets/tiles/fire.png" id="12"]
+[ext_resource type="Script" path="res://scripts/game/villagers_view.gd" id="13"]
+[ext_resource type="Script" path="res://scripts/game/save_menu.gd" id="14"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_water.png" id="15"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Map" type="Node2D" parent="."]
+script = ExtResource("2")
+
+[node name="Terrain" type="TileMapLayer" parent="Map"]
+
+[node name="Shore" type="TileMapLayer" parent="Map"]
+
+[node name="Scorch" type="TileMapLayer" parent="Map"]
+
+[node name="Roads" type="TileMapLayer" parent="Map"]
+
+[node name="Actors" type="Node2D" parent="Map"]
+y_sort_enabled = true
+
+[node name="Buildings" type="TileMapLayer" parent="Map/Actors"]
+y_sort_enabled = true
+
+[node name="Villagers" type="Node2D" parent="Map/Actors"]
+y_sort_enabled = true
+script = ExtResource("13")
+
+[node name="IdleMarks" type="TileMapLayer" parent="Map"]
+z_index = 1
+
+[node name="RangeRing" type="Line2D" parent="Map"]
+visible = false
+z_index = 1
+closed = true
+width = 1.0
+default_color = Color(0.82, 0.91, 0.97, 0.75)
+
+[node name="Highlight" type="Sprite2D" parent="Map"]
+visible = false
+z_index = 1
+texture = ExtResource("5")
+
+[node name="Preview" type="TileMapLayer" parent="Map"]
+modulate = Color(1, 1, 1, 0.6)
+
+[node name="Dragon" type="Node2D" parent="Map"]
+z_index = 2
+script = ExtResource("9")
+
+[node name="Shadow" type="Sprite2D" parent="Map/Dragon"]
+visible = false
+texture = ExtResource("11")
+
+[node name="Breath" type="Node2D" parent="Map/Dragon"]
+visible = false
+
+[node name="Flame1" type="Sprite2D" parent="Map/Dragon/Breath"]
+texture = ExtResource("12")
+hframes = 3
+
+[node name="Flame2" type="Sprite2D" parent="Map/Dragon/Breath"]
+texture = ExtResource("12")
+hframes = 3
+
+[node name="Flame3" type="Sprite2D" parent="Map/Dragon/Breath"]
+texture = ExtResource("12")
+hframes = 3
+
+[node name="Flame4" type="Sprite2D" parent="Map/Dragon/Breath"]
+texture = ExtResource("12")
+hframes = 3
+
+[node name="Body" type="Sprite2D" parent="Map/Dragon"]
+visible = false
+texture = ExtResource("10")
+hframes = 2
+
+[node name="Camera" type="Camera2D" parent="."]
+script = ExtResource("3")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("4")
+
+[node name="StatsRow" type="HBoxContainer" parent="HUD"]
+offset_left = 8.0
+offset_top = 6.0
+theme_override_constants/separation = 3
+
+[node name="WoodIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("6")
+stretch_mode = 3
+
+[node name="Wood" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="FoodIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("7")
+stretch_mode = 3
+
+[node name="Food" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="WaterIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("15")
+stretch_mode = 3
+
+[node name="Water" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(40, 0)
+layout_mode = 2
+
+[node name="PeopleIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("8")
+stretch_mode = 3
+
+[node name="People" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(54, 0)
+layout_mode = 2
+
+[node name="Jobs" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(96, 0)
+layout_mode = 2
+
+[node name="Clock" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="SavePanel" type="PanelContainer" parent="HUD"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -6.0
+offset_top = 4.0
+offset_right = -6.0
+grow_horizontal = 0
+
+[node name="Row" type="HBoxContainer" parent="HUD/SavePanel"]
+layout_mode = 2
+
+[node name="Status" type="Label" parent="HUD/SavePanel/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="SaveButton" type="Button" parent="HUD/SavePanel/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+text = "Save"
+
+[node name="LoadButton" type="Button" parent="HUD/SavePanel/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+text = "Load"
+
+[node name="Banner" type="PanelContainer" parent="HUD"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_top = 34.0
+offset_bottom = 34.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="BannerText" type="Label" parent="HUD/Banner"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="BannerTimer" type="Timer" parent="HUD"]
+unique_name_in_owner = true
+wait_time = 7.0
+one_shot = true
+
+[node name="SaveMenu" type="Control" parent="HUD"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("14")
+
+[node name="Dim" type="ColorRect" parent="HUD/SaveMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.03, 0.03, 0.12, 0.6)
+
+[node name="Center" type="CenterContainer" parent="HUD/SaveMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="HUD/SaveMenu/Center"]
+custom_minimum_size = Vector2(340, 0)
+layout_mode = 2
+
+[node name="Rows" type="VBoxContainer" parent="HUD/SaveMenu/Center/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MenuTitle" type="Label" parent="HUD/SaveMenu/Center/Panel/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.97, 0.82, 0.28, 1)
+horizontal_alignment = 1
+
+[node name="NameRow" type="HBoxContainer" parent="HUD/SaveMenu/Center/Panel/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="NameLabel" type="Label" parent="HUD/SaveMenu/Center/Panel/Rows/NameRow"]
+layout_mode = 2
+text = "Name"
+
+[node name="NameField" type="LineEdit" parent="HUD/SaveMenu/Center/Panel/Rows/NameRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Village name"
+
+[node name="Slots" type="VBoxContainer" parent="HUD/SaveMenu/Center/Panel/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="MenuCancel" type="Button" parent="HUD/SaveMenu/Center/Panel/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+focus_mode = 0
+text = "Cancel"
+
+[node name="ConfirmDialog" type="ConfirmationDialog" parent="HUD/SaveMenu"]
+unique_name_in_owner = true
+title = "Are you sure?"
+size = Vector2i(280, 60)
+
+[node name="StatusTimer" type="Timer" parent="HUD"]
+unique_name_in_owner = true
+wait_time = 3.0
+one_shot = true
+
+[node name="ToolPanel" type="PanelContainer" parent="HUD"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_top = -6.0
+offset_bottom = -6.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="Tools" type="HBoxContainer" parent="HUD/ToolPanel"]
+unique_name_in_owner = true
+layout_mode = 2

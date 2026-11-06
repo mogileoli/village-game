@@ -1,0 +1,100 @@
+class_name Hud
+extends CanvasLayer
+## Shows village stats and the build toolbar.
+
+signal tool_selected(tool: StringName)
+signal save_requested(slot: int, save_name: String)
+signal load_requested(slot: int)
+signal menu_toggled(is_open: bool)
+
+const DEMOLISH := &"demolish"
+const ROAD := &"road"
+const WOOD_ICON := preload("res://assets/ui/icon_wood.png")
+
+## Offered as the name when saving.
+var village_name := SaveGame.OLD_SAVE_DISPLAY_NAME
+
+var _tool_buttons := ButtonGroup.new()
+
+@onready var _wood: Label = %Wood
+@onready var _food: Label = %Food
+@onready var _water: Label = %Water
+@onready var _people: Label = %People
+@onready var _jobs: Label = %Jobs
+@onready var _clock: Label = %Clock
+@onready var _tools: HBoxContainer = %Tools
+@onready var _status: Label = %Status
+@onready var _status_timer: Timer = %StatusTimer
+@onready var _load_button: Button = %LoadButton
+@onready var _save_menu: SaveMenu = %SaveMenu
+@onready var _banner: Control = %Banner
+@onready var _banner_text: Label = %BannerText
+@onready var _banner_timer: Timer = %BannerTimer
+
+
+func _ready() -> void:
+	_tool_buttons.allow_unpress = true
+	for type: StringName in VillageSim.BUILDINGS:
+		var building: Dictionary = VillageSim.BUILDINGS[type]
+		_add_tool("%s %d" % [building.name, building.cost], type, WOOD_ICON)
+	_add_tool("Road %d" % VillageSim.ROAD_COST, ROAD, WOOD_ICON)
+	_add_tool("Demolish", DEMOLISH, null)
+	%SaveButton.pressed.connect(func() -> void: _save_menu.open_for_save(village_name))
+	_load_button.pressed.connect(_save_menu.open_for_load)
+	_save_menu.save_chosen.connect(save_requested.emit)
+	_save_menu.load_chosen.connect(load_requested.emit)
+	_save_menu.visibility_changed.connect(func() -> void: menu_toggled.emit(_save_menu.visible))
+	_status_timer.timeout.connect(func() -> void: _status.text = "")
+	_banner_timer.timeout.connect(_banner.hide)
+
+
+func show_stats(sim: VillageSim, speed: int) -> void:
+	_wood.text = str(sim.wood)
+	_food.text = str(sim.food)
+	_water.text = str(sim.water)
+	_people.text = "%d/%d" % [sim.population, sim.housing()]
+	_jobs.text = "Jobs %d/%d" % [sim.filled_jobs(), sim.total_jobs()]
+	_clock.text = "Paused" if speed == 0 else "Speed %dx" % speed
+
+
+func show_status(message: String) -> void:
+	_status.text = message
+	_status_timer.start()
+
+
+func show_banner(message: String) -> void:
+	_banner_text.text = message
+	_banner.show()
+	_banner_timer.start()
+
+
+func hide_banner() -> void:
+	_banner_timer.stop()
+	_banner.hide()
+
+
+func set_can_load(can_load: bool) -> void:
+	_load_button.disabled = not can_load
+
+
+func clear_tool() -> void:
+	var pressed := _tool_buttons.get_pressed_button()
+	if pressed:
+		pressed.button_pressed = false
+
+
+func _add_tool(label: String, tool: StringName, icon: Texture2D) -> void:
+	var button := Button.new()
+	button.text = label
+	button.icon = icon
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	button.toggle_mode = true
+	button.button_group = _tool_buttons
+	button.focus_mode = Control.FOCUS_NONE
+	button.toggled.connect(func(on: bool) -> void:
+		if on:
+			tool_selected.emit(tool)
+		elif _tool_buttons.get_pressed_button() == null:
+			tool_selected.emit(&"")
+	)
+	_tools.add_child(button)

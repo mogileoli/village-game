@@ -1,0 +1,134 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://assets/ui/pixel_font.fnt" id="font"]
+[ext_resource type="Texture2D" path="res://assets/ui/panel.png" id="panel"]
+[ext_resource type="Texture2D" path="res://assets/ui/button.png" id="button"]
+[ext_resource type="Texture2D" path="res://assets/ui/button_hover.png" id="button_hover"]
+[ext_resource type="Texture2D" path="res://assets/ui/button_pressed.png" id="button_pressed"]
+[ext_resource type="Texture2D" path="res://assets/ui/button_disabled.png" id="button_disabled"]
+[ext_resource type="Texture2D" path="res://assets/ui/close.png" id="close"]
+
+[sub_resource type="StyleBoxTexture" id="panel_style"]
+content_margin_left = 6.0
+content_margin_top = 5.0
+content_margin_right = 6.0
+content_margin_bottom = 5.0
+texture = ExtResource("panel")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+
+[sub_resource type="StyleBoxTexture" id="button_style"]
+content_margin_left = 6.0
+content_margin_top = 4.0
+content_margin_right = 6.0
+content_margin_bottom = 4.0
+texture = ExtResource("button")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+
+[sub_resource type="StyleBoxTexture" id="button_hover_style"]
+content_margin_left = 6.0
+content_margin_top = 4.0
+content_margin_right = 6.0
+content_margin_bottom = 4.0
+texture = ExtResource("button_hover")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+
+[sub_resource type="StyleBoxTexture" id="button_pressed_style"]
+content_margin_left = 6.0
+content_margin_top = 4.0
+content_margin_right = 6.0
+content_margin_bottom = 4.0
+texture = ExtResource("button_pressed")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+
+[sub_resource type="StyleBoxTexture" id="button_disabled_style"]
+content_margin_left = 6.0
+content_margin_top = 4.0
+content_margin_right = 6.0
+content_margin_bottom = 4.0
+texture = ExtResource("button_disabled")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+
+[sub_resource type="StyleBoxEmpty" id="empty_style"]
+
+[sub_resource type="StyleBoxFlat" id="field_style"]
+content_margin_left = 4.0
+content_margin_top = 3.0
+content_margin_right = 4.0
+content_margin_bottom = 3.0
+bg_color = Color(0.016, 0.016, 0.125, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.56, 0.6, 0.69, 1)
+
+[sub_resource type="StyleBoxFlat" id="dialog_style"]
+content_margin_left = 6.0
+content_margin_top = 4.0
+content_margin_right = 6.0
+content_margin_bottom = 4.0
+bg_color = Color(0.063, 0.063, 0.282, 1)
+
+[sub_resource type="StyleBoxTexture" id="window_style"]
+texture = ExtResource("panel")
+texture_margin_left = 5.0
+texture_margin_top = 5.0
+texture_margin_right = 5.0
+texture_margin_bottom = 5.0
+expand_margin_left = 3.0
+expand_margin_top = 18.0
+expand_margin_right = 3.0
+expand_margin_bottom = 3.0
+
+[resource]
+default_font = ExtResource("font")
+default_font_size = 8
+AcceptDialog/styles/panel = SubResource("dialog_style")
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/colors/font_disabled_color = Color(0.56, 0.6, 0.69, 1)
+Button/colors/font_focus_color = Color(1, 1, 1, 1)
+Button/colors/font_hover_color = Color(1, 1, 1, 1)
+Button/colors/font_hover_pressed_color = Color(0.97, 0.82, 0.28, 1)
+Button/colors/font_pressed_color = Color(0.97, 0.82, 0.28, 1)
+Button/constants/h_separation = 2
+Button/styles/disabled = SubResource("button_disabled_style")
+Button/styles/focus = SubResource("empty_style")
+Button/styles/hover = SubResource("button_hover_style")
+Button/styles/hover_pressed = SubResource("button_pressed_style")
+Button/styles/normal = SubResource("button_style")
+Button/styles/pressed = SubResource("button_pressed_style")
+Label/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/colors/caret_color = Color(0.97, 0.82, 0.28, 1)
+LineEdit/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/colors/font_placeholder_color = Color(0.56, 0.6, 0.69, 1)
+LineEdit/colors/font_selected_color = Color(1, 1, 1, 1)
+LineEdit/colors/selection_color = Color(0.16, 0.19, 0.47, 1)
+LineEdit/styles/focus = SubResource("field_style")
+LineEdit/styles/normal = SubResource("field_style")
+Label/colors/font_shadow_color = Color(0, 0, 0, 0)
+PanelContainer/styles/panel = SubResource("panel_style")
+Window/colors/title_color = Color(0.97, 0.82, 0.28, 1)
+Window/constants/close_h_offset = 12
+Window/constants/close_v_offset = 12
+Window/constants/title_height = 16
+Window/font_sizes/title_font_size = 8
+Window/fonts/title_font = ExtResource("font")
+Window/icons/close = ExtResource("close")
+Window/icons/close_pressed = ExtResource("close")
+Window/styles/embedded_border = SubResource("window_style")
+Window/styles/embedded_unfocused_border = SubResource("window_style")
