@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/game/villagers_view.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/game/save_menu.gd" id="14"]
 [ext_resource type="Texture2D" path="res://assets/ui/icon_water.png" id="15"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_fighter.png" id="16"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -89,6 +90,7 @@ hframes = 3
 visible = false
 texture = ExtResource("10")
 hframes = 2
+vframes = 2
 
 [node name="Camera" type="Camera2D" parent="."]
 script = ExtResource("3")
@@ -146,6 +148,16 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 0)
 layout_mode = 2
 
+[node name="FighterIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("16")
+stretch_mode = 3
+
+[node name="Fighters" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 0)
+layout_mode = 2
+
 [node name="Clock" type="Label" parent="HUD/StatsRow"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -193,6 +205,40 @@ mouse_filter = 2
 unique_name_in_owner = true
 layout_mode = 2
 horizontal_alignment = 1
+
+[node name="DragonPanel" type="PanelContainer" parent="HUD"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_top = 60.0
+offset_bottom = 60.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="Row" type="HBoxContainer" parent="HUD/DragonPanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="DragonName" type="Label" parent="HUD/DragonPanel/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.97, 0.55, 0.35, 1)
+
+[node name="DragonTrack" type="ColorRect" parent="HUD/DragonPanel/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(96, 6)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.09, 0.06, 0.13, 1)
+
+[node name="DragonFill" type="ColorRect" parent="HUD/DragonPanel/Row/DragonTrack"]
+unique_name_in_owner = true
+layout_mode = 0
+offset_right = 96.0
+offset_bottom = 6.0
+color = Color(0.82, 0.19, 0.16, 1)
 
 [node name="BannerTimer" type="Timer" parent="HUD"]
 unique_name_in_owner = true

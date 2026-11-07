@@ -21,6 +21,11 @@ var _tool_buttons := ButtonGroup.new()
 @onready var _water: Label = %Water
 @onready var _people: Label = %People
 @onready var _jobs: Label = %Jobs
+@onready var _fighters: Label = %Fighters
+@onready var _dragon_panel: Control = %DragonPanel
+@onready var _dragon_name: Label = %DragonName
+@onready var _dragon_fill: ColorRect = %DragonFill
+@onready var _dragon_track: Control = %DragonTrack
 @onready var _clock: Label = %Clock
 @onready var _tools: HBoxContainer = %Tools
 @onready var _status: Label = %Status
@@ -36,7 +41,7 @@ func _ready() -> void:
 	_tool_buttons.allow_unpress = true
 	for type: StringName in VillageSim.BUILDINGS:
 		var building: Dictionary = VillageSim.BUILDINGS[type]
-		_add_tool("%s %d" % [building.name, building.cost], type, WOOD_ICON)
+		_add_tool("%s %d" % [building.get("label", building.name), building.cost], type, WOOD_ICON)
 	_add_tool("Road %d" % VillageSim.ROAD_COST, ROAD, WOOD_ICON)
 	_add_tool("Demolish", DEMOLISH, null)
 	%SaveButton.pressed.connect(func() -> void: _save_menu.open_for_save(village_name))
@@ -54,6 +59,8 @@ func show_stats(sim: VillageSim, speed: int) -> void:
 	_water.text = str(sim.water)
 	_people.text = "%d/%d" % [sim.population, sim.housing()]
 	_jobs.text = "Jobs %d/%d" % [sim.filled_jobs(), sim.total_jobs()]
+	_fighters.text = str(sim.fighter_count())
+	_show_dragon(sim)
 	_clock.text = "Paused" if speed == 0 else "Speed %dx" % speed
 
 
@@ -66,6 +73,17 @@ func show_banner(message: String) -> void:
 	_banner_text.text = message
 	_banner.show()
 	_banner_timer.start()
+
+
+## The dragon's resolve, which water from towers and fighters wears down.
+func _show_dragon(sim: VillageSim) -> void:
+	var visible_now := sim.dragon_is_visiting()
+	_dragon_panel.visible = visible_now
+	if not visible_now:
+		return
+	_dragon_name.text = "Dragon" if sim.dragon_level == 1 else "Dragon Lv %d" % sim.dragon_level
+	var share := float(sim.dragon_resolve) / sim.dragon_max_resolve()
+	_dragon_fill.size.x = roundf(_dragon_track.size.x * share)
 
 
 func hide_banner() -> void:

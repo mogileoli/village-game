@@ -4,6 +4,8 @@ extends Node2D
 
 const TEXTURE := preload("res://assets/tiles/villagers.png")
 const LOOKS := 4
+## The sprite sheet row worn by trained fighters.
+const FIGHTER_LOOK := 4
 const WALK_FRAMES_PER_SECOND := 6.0
 const DOOR_INSET := 14.0
 const MAX_LANE := 6
@@ -40,7 +42,7 @@ func _add_sprite() -> void:
 	var sprite := Sprite2D.new()
 	sprite.texture = TEXTURE
 	sprite.hframes = 6
-	sprite.vframes = LOOKS
+	sprite.vframes = LOOKS + 1
 	sprite.offset = Vector2(0, -7)
 	sprite.frame_coords = Vector2i(FRAME_DOWN, _sprites.size() % LOOKS)
 	sprite.visible = false
@@ -53,6 +55,7 @@ func _draw_villager(villager: Villager, sprite: Sprite2D, index: int, tick_fract
 	sprite.visible = walking or villager.state == Villager.State.OUTSIDE
 	if not sprite.visible or villager.cell == Villager.NO_CELL:
 		return
+	sprite.frame_coords.y = FIGHTER_LOOK if _sim.is_fighter(villager) else index % LOOKS
 	var lane := _lane(index)
 	if not walking:
 		sprite.position = _map.cell_center(villager.cell) + lane

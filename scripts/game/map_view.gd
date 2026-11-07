@@ -18,7 +18,9 @@ const WATER_FRAMES := 3
 const WATER_FRAMES_PER_SECOND := 2.0
 const SIDES := [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 const DIAGONALS := [Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1)]
-const BUILDING_ATLAS := {&"house": 0, &"farm": 1, &"lumber_camp": 2, &"well": 3, &"tower": 4}
+const BUILDING_ATLAS := {
+	&"house": 0, &"farm": 1, &"lumber_camp": 2, &"well": 3, &"tower": 4, &"training_center": 5,
+}
 const RANGE_RING_POINTS := 48
 const VALID_COLOR := Color.WHITE
 const INVALID_COLOR := Color(1, 0.25, 0.2)

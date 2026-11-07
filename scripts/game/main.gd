@@ -12,8 +12,6 @@ var _tick_timer := 0.0
 var _speed_before_pause := 1
 var _last_road_cell := Vector2i.ZERO
 var _menu_open := false
-## Set by the towers' defense, which comes just before the strike it softens.
-var _buildings_saved := 0
 
 @onready var _map: MapView = $Map
 @onready var _dragon: DragonView = $Map/Dragon
@@ -39,7 +37,7 @@ func _start_sim(new_sim: VillageSim) -> void:
 	sim.stats_changed.connect(_refresh_stats)
 	sim.dragon_incoming.connect(_on_dragon_incoming)
 	sim.dragon_struck.connect(_on_dragon_struck)
-	sim.dragon_defended.connect(_on_dragon_defended)
+	sim.dragon_left.connect(_on_dragon_left)
 	_map.bind(sim)
 	_dragon.bind(sim, _map)
 	_villagers.bind(sim, _map)
@@ -114,30 +112,30 @@ func _unhandled_input(event: InputEvent) -> void:
 				_set_speed(event.physical_keycode - KEY_0)
 
 
-func _on_dragon_incoming(target: Vector2i) -> void:
-	_hud.show_banner("A dragon approaches!")
+func _on_dragon_incoming(target: Vector2i, level: int) -> void:
+	_hud.show_banner("A dragon approaches!" if level == 1 else "A level %d dragon approaches!" % level)
 	_camera.focus_on(_map.cell_center(target))
 
 
-func _on_dragon_defended(defenders: Array[Vector2i], _threatened: int) -> void:
-	_buildings_saved = defenders.size()
-
-
 func _on_dragon_struck(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-	var saved := _buildings_saved
-	_buildings_saved = 0
-	var message := ""
-	if destroyed.is_empty() and saved > 0:
-		message = "Your towers drove off the dragon!"
-	elif destroyed.is_empty():
-		message = "The dragon found nothing to burn"
-	elif destroyed.size() == 1:
-		message = "The dragon destroyed a building!"
+	if destroyed.size() == 1:
+		_hud.show_banner("The dragon destroyed a building!")
+	elif destroyed.size() > 1:
+		_hud.show_banner("The dragon destroyed %d buildings!" % destroyed.size())
+
+
+func _on_dragon_left(driven_off: bool, destroyed: int) -> void:
+	var losses := ""
+	if destroyed == 1:
+		losses = " 1 building lost."
+	elif destroyed > 1:
+		losses = " %d buildings lost." % destroyed
+	if driven_off:
+		_hud.show_banner("You drove off the dragon!" + losses)
+	elif destroyed == 0:
+		_hud.show_banner("The dragon flew away")
 	else:
-		message = "The dragon destroyed %d buildings!" % destroyed.size()
-	if saved > 0 and not destroyed.is_empty():
-		message += " Towers saved %d." % saved
-	_hud.show_banner(message)
+		_hud.show_banner("The dragon flew away." + losses)
 
 
 func _use_tool(cell: Vector2i) -> void:

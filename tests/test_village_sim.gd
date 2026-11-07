@@ -15,20 +15,11 @@ func _init() -> void:
 	_test_save_round_trip()
 	_test_save_overwrites_previous()
 	_test_rejects_bad_saves()
-	_test_dragon_needs_a_big_enough_village()
-	_test_dragon_arrival_time_varies()
-	_test_dragon_damage_is_under_ten_percent_and_varies()
-	_test_dragon_burns_a_connected_area()
-	_test_only_one_dragon_comes()
-	_test_demolishing_during_approach_saves_the_village()
-	_test_can_rebuild_on_scorched_ground()
-	_test_dragon_survives_save_and_load()
 	_test_old_saves_still_load()
 	_test_road_rules()
 	_test_roads_and_buildings_block_each_other()
 	_test_demolishing_roads()
 	_test_roads_survive_save_and_load()
-	_test_dragon_spares_roads()
 	_test_houses_and_workplaces()
 	_test_no_workers_means_no_production()
 	_test_only_people_inside_produce()
@@ -43,12 +34,26 @@ func _init() -> void:
 	_test_save_slots()
 	_test_well_needs_workers()
 	_test_people_need_water()
-	_test_towers_save_buildings()
-	_test_enough_towers_drive_off_the_dragon()
-	_test_towers_need_water_and_range()
 	_test_towers_are_not_jobs()
 	_test_older_saves_get_water()
 	_test_jobs_balance_wood_food_and_water()
+	_test_dragon_needs_a_big_enough_village()
+	_test_dragon_arrival_time_varies()
+	_test_dragon_visits_stay_and_strike_more_than_once()
+	_test_dragon_damage_limits_and_variety()
+	_test_dragons_keep_coming_and_level_up()
+	_test_small_villages_only_see_level_1()
+	_test_dragon_choice_of_target()
+	_test_strikes_burn_the_closest_buildings()
+	_test_demolishing_during_approach_saves_the_village()
+	_test_can_rebuild_on_scorched_ground()
+	_test_towers_drive_off_the_dragon()
+	_test_defense_needs_water_and_range()
+	_test_dragon_spares_roads()
+	_test_training_makes_fighters()
+	_test_fighters_rush_to_the_dragon_and_throw_water()
+	_test_dragon_survives_save_and_load()
+	_test_older_saves_get_more_dragons()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -222,135 +227,12 @@ func _village(buildings: int, dragon_seed := 1) -> VillageSim:
 	return sim
 
 
-func _run_dragon(sim: VillageSim, until: VillageSim.DragonState) -> void:
-	for i in range(1000):
-		if sim.dragon_state == until:
-			return
-		sim.tick()
-
-
-func _test_dragon_needs_a_big_enough_village() -> void:
-	var sim := _village(VillageSim.DRAGON_MIN_BUILDINGS - 1)
-	for i in range(VillageSim.DRAGON_MAX_WAIT_TICKS * 2):
-		sim.tick()
-	_check(sim.dragon_state == VillageSim.DragonState.WAITING, "dragon waits for 11 buildings")
-	sim.place(&"farm", Vector2i(25, 20))
-	sim.place(&"farm", Vector2i(26, 20))
-	_check(sim.building_count() >= VillageSim.DRAGON_MIN_BUILDINGS, "test village grew")
-	sim.tick()
-	_check(sim.dragon_state == VillageSim.DragonState.WAITING, "dragon doesn't arrive the moment the village is big enough")
-
-
-func _test_dragon_arrival_time_varies() -> void:
-	var times := {}
-	for dragon_seed in range(30):
-		var timer := VillageSim.new(10, 10, 1, dragon_seed).dragon_timer
-		_check(
-			timer >= VillageSim.DRAGON_MIN_WAIT_TICKS and timer <= VillageSim.DRAGON_MAX_WAIT_TICKS,
-			"arrival time is in range"
-		)
-		times[timer] = true
-	_check(times.size() > 10, "arrival time varies: %d different" % times.size())
-
-
-func _test_dragon_damage_is_under_ten_percent_and_varies() -> void:
-	for size: int in [11, 20, 45, 120]:
-		var losses := {}
-		var burned_areas := {}
-		for dragon_seed in range(40):
-			var sim := _village(size, dragon_seed)
-			_check(sim.building_count() == size, "built village of %d" % size)
-			var result := [0, 0]
-			sim.dragon_struck.connect(func(destroyed: Array[Vector2i], burned: Array[Vector2i]) -> void:
-				result[0] = destroyed.size()
-				result[1] = burned.size())
-			_run_dragon(sim, VillageSim.DragonState.DEPARTING)
-			_check(result[0] >= 1, "dragon destroys something")
-			_check(result[0] / float(size) < 0.1, "%d of %d is under 10%%" % [result[0], size])
-			_check(sim.building_count() == size - result[0], "destroyed buildings are removed")
-			losses[result[0]] = true
-			burned_areas[result[1]] = true
-		if size == 120:
-			_check(losses.size() >= 3, "damage varies: %d different" % losses.size())
-		_check(burned_areas.size() >= 2, "burned area varies: %d different" % burned_areas.size())
-
-
-func _test_dragon_burns_a_connected_area() -> void:
-	var sim := _village(120, 3)
-	var lost: Array[Vector2i] = []
-	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-		lost.assign(destroyed))
-	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
-	var target := sim.dragon_target
-	var farthest_lost := 0
-	for cell in lost:
-		farthest_lost = maxi(farthest_lost, cell.distance_squared_to(target))
-	for y in range(40):
-		for x in range(40):
-			var cell := Vector2i(x, y)
-			if sim.building_at(cell) != &"":
-				_check(cell.distance_squared_to(target) >= farthest_lost, "closest buildings burn first")
-
-
-func _test_only_one_dragon_comes() -> void:
-	var sim := _village(30)
-	var visits := [0]
-	sim.dragon_incoming.connect(func(_target: Vector2i) -> void: visits[0] += 1)
-	for i in range(3000):
-		sim.tick()
-	_check(visits[0] == 1, "exactly one dragon: %d" % visits[0])
-	_check(sim.dragon_state == VillageSim.DragonState.GONE, "dragon leaves for good")
-
-
-func _test_demolishing_during_approach_saves_the_village() -> void:
-	var sim := _village(12)
-	_run_dragon(sim, VillageSim.DragonState.INBOUND)
-	sim.demolish(sim.dragon_target)
-	sim.demolish(_first_building(sim))
-	var remaining := sim.building_count()
-	var result := [-1]
-	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-		result[0] = destroyed.size())
-	_run_dragon(sim, VillageSim.DragonState.GONE)
-	_check(result[0] == 0, "too small a village loses nothing")
-	_check(sim.building_count() == remaining, "buildings survive")
-
-
 func _first_building(sim: VillageSim) -> Vector2i:
 	for y in range(40):
 		for x in range(40):
 			if sim.building_at(Vector2i(x, y)) != &"":
 				return Vector2i(x, y)
 	return Vector2i(-1, -1)
-
-
-func _test_can_rebuild_on_scorched_ground() -> void:
-	var sim := _village(30)
-	var lost: Array[Vector2i] = []
-	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-		lost.assign(destroyed))
-	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
-	var cell := lost[0]
-	_check(sim.is_scorched(cell), "destroyed building leaves scorched ground")
-	_check(sim.place(&"house", cell), "can rebuild on scorched ground")
-	_check(not sim.is_scorched(cell), "rebuilding clears the scorch")
-
-
-func _test_dragon_survives_save_and_load() -> void:
-	for state: VillageSim.DragonState in [VillageSim.DragonState.INBOUND, VillageSim.DragonState.DEPARTING]:
-		var sim := _village(40, 5)
-		_run_dragon(sim, state)
-		SaveGame.write(sim, TEST_SAVE)
-		var loaded := SaveGame.read(TEST_SAVE)
-		_check(loaded != null, "mid-flight save loads")
-		if loaded == null:
-			return
-		_check(loaded.to_save_data() == sim.to_save_data(), "mid-flight save matches")
-		for i in range(12):
-			sim.tick()
-			loaded.tick()
-		_check(loaded.to_save_data() == sim.to_save_data(), "loaded dragon behaves identically")
-		_check(loaded.dragon_state == VillageSim.DragonState.GONE, "loaded dragon finishes its visit")
 
 
 func _test_old_saves_still_load() -> void:
@@ -431,23 +313,6 @@ func _test_roads_survive_save_and_load() -> void:
 	_check(VillageSim.from_save_data(data) == null, "rejects a road on water")
 	data.roads = [{"x": 20, "y": 20}, {"x": 20, "y": 20}]
 	_check(VillageSim.from_save_data(data) == null, "rejects duplicate roads")
-
-
-func _test_dragon_spares_roads() -> void:
-	var sim := _village(30, 4)
-	var road_cells: Array[Vector2i] = []
-	for y in range(40):
-		for x in range(40):
-			if sim.place_road(Vector2i(x, y)):
-				road_cells.append(Vector2i(x, y))
-	var before := sim.building_count()
-	var lost := [0]
-	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-		lost[0] = destroyed.size())
-	_run_dragon(sim, VillageSim.DragonState.GONE)
-	_check(lost[0] >= 1 and lost[0] / float(before) < 0.1, "roads don't affect the 10% limit")
-	for cell in road_cells:
-		_check(sim.has_road(cell) and not sim.is_scorched(cell), "road survives dragon")
 
 
 func _test_houses_and_workplaces() -> void:
@@ -769,90 +634,6 @@ func _test_people_need_water() -> void:
 	_check(sim.food == 10 - sim.population, "each villager eats 1 food per meal: %d left" % sim.food)
 
 
-## A village whose dragon is on its way, with towers built nearest its target.
-func _defended_village(tower_count: int, water: int, dragon_seed := 3) -> VillageSim:
-	var sim := _village(60, dragon_seed)
-	_run_dragon(sim, VillageSim.DragonState.INBOUND)
-	var target := sim.dragon_target
-	var cells: Array[Vector2i] = []
-	for y in range(40):
-		for x in range(40):
-			cells.append(Vector2i(x, y))
-	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
-		return a.distance_squared_to(target) < b.distance_squared_to(target))
-	var placed := 0
-	for cell in cells:
-		if placed == tower_count:
-			break
-		if sim.place(&"tower", cell):
-			placed += 1
-	_check(placed == tower_count, "placed %d towers" % placed)
-	sim.water = water
-	return sim
-
-
-func _strike(sim: VillageSim) -> Dictionary:
-	var result := {"destroyed": 0, "defenders": 0, "threatened": 0, "struck": false}
-	sim.dragon_defended.connect(func(defenders: Array[Vector2i], threatened: int) -> void:
-		result.defenders = defenders.size()
-		result.threatened = threatened)
-	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
-		result.struck = true
-		result.destroyed = destroyed.size())
-	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
-	return result
-
-
-func _test_towers_save_buildings() -> void:
-	for dragon_seed in range(5):
-		var sim := _defended_village(1, 100, dragon_seed)
-		var tower := sim.towers()[0]
-		_check(Vector2(tower).distance_to(Vector2(sim.dragon_target)) <= VillageSim.TOWER_RANGE, "tower is in range")
-		var result := _strike(sim)
-		_check(result.defenders == 1, "one tower defends")
-		_check(result.destroyed == result.threatened - 1, "it saves one building: %d of %d lost" % [result.destroyed, result.threatened])
-		_check(sim.water == 100 - VillageSim.TOWER_WATER_PER_DEFENSE, "defending costs water: %d" % sim.water)
-
-
-func _test_enough_towers_drive_off_the_dragon() -> void:
-	var sim := _defended_village(12, 1000)
-	var before := sim.building_count()
-	var result := _strike(sim)
-	_check(result.struck and result.destroyed == 0, "enough towers save everything")
-	_check(result.defenders == result.threatened, "only as many towers fire as needed")
-	_check(sim.water == 1000 - result.defenders * VillageSim.TOWER_WATER_PER_DEFENSE, "only firing towers use water")
-	_check(sim.building_count() == before, "no buildings lost")
-	_run_dragon(sim, VillageSim.DragonState.GONE)
-	_check(sim.dragon_state == VillageSim.DragonState.GONE, "the dragon still leaves")
-
-
-func _test_towers_need_water_and_range() -> void:
-	var dry := _defended_village(10, VillageSim.TOWER_WATER_PER_DEFENSE - 1)
-	var dry_result := _strike(dry)
-	_check(dry_result.defenders == 0 and dry_result.destroyed >= 1, "towers without water can't defend")
-	_check(dry.water == VillageSim.TOWER_WATER_PER_DEFENSE - 1, "no water spent when it can't defend")
-	var limited := _defended_village(10, VillageSim.TOWER_WATER_PER_DEFENSE)
-	var one_shot := _strike(limited)
-	_check(one_shot.defenders == 1 and limited.water == 0, "water limits how many towers fire")
-
-	var far := _village(60, 3)
-	_run_dragon(far, VillageSim.DragonState.INBOUND)
-	far.water = 1000
-	for y in range(40):
-		for x in range(40):
-			if Vector2(x, y).distance_to(Vector2(far.dragon_target)) > VillageSim.TOWER_RANGE + 1:
-				far.place(&"tower", Vector2i(x, y))
-	var far_result := _strike(far)
-	_check(far_result.defenders == 0 and far_result.destroyed >= 1, "towers out of range don't defend")
-	for size: int in [11, 30, 90]:
-		for dragon_seed in range(10):
-			var village := _village(size, dragon_seed)
-			village.place(&"tower", Vector2i(30, 30))
-			village.water = 0
-			var result := _strike(village)
-			_check(result.destroyed / float(village.building_count() + result.destroyed) < 0.1, "still under 10% with towers")
-
-
 func _test_towers_are_not_jobs() -> void:
 	var sim := VillageSim.new()
 	sim.wood = 100
@@ -906,3 +687,389 @@ func _test_jobs_balance_wood_food_and_water() -> void:
 			if villager.state == Villager.State.WORKING:
 				_check(farming._product_of(villager.job) != "" , "working villagers have a real job")
 	_check(farming.water > 0, "the well gets worked")
+
+
+# --- Dragons ---
+
+func _run_dragon(sim: VillageSim, until: VillageSim.DragonState) -> void:
+	for i in range(2000):
+		if sim.dragon_state == until:
+			return
+		sim.tick()
+
+
+## Plays one whole dragon visit and reports what happened.
+func _visit(sim: VillageSim) -> Dictionary:
+	var result := {
+		"level": 0, "strikes": 0, "destroyed": 0, "driven_off": false, "rampage": 0,
+		"hits": 0, "attackers": [], "left": false, "buildings_before": 0, "water_before": 0,
+	}
+	var on_strike := func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
+		result.strikes += 1
+		result.destroyed += destroyed.size()
+	var on_hit := func(attackers: Array[Vector2i], _damage: int) -> void:
+		result.hits += 1
+		result.attackers.append_array(attackers)
+	var on_left := func(driven_off: bool, _destroyed: int) -> void:
+		result.left = true
+		result.driven_off = driven_off
+		result.rampage = sim.dragon_rampage_ticks
+	sim.dragon_struck.connect(on_strike)
+	sim.dragon_hit.connect(on_hit)
+	sim.dragon_left.connect(on_left)
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	result.level = sim.dragon_level
+	result.buildings_before = sim.building_count()
+	result.water_before = sim.water
+	for i in range(200):
+		sim.tick()
+		if result.left:
+			break
+	sim.dragon_struck.disconnect(on_strike)
+	sim.dragon_hit.disconnect(on_hit)
+	sim.dragon_left.disconnect(on_left)
+	return result
+
+
+func _test_dragon_needs_a_big_enough_village() -> void:
+	var sim := _village(VillageSim.DRAGON_MIN_BUILDINGS - 1)
+	for i in range(VillageSim.FIRST_DRAGON_WAIT_TICKS.y * 2):
+		sim.tick()
+	_check(sim.dragon_state == VillageSim.DragonState.WAITING, "dragon waits for 11 buildings")
+	sim.place(&"farm", Vector2i(25, 20))
+	sim.place(&"farm", Vector2i(26, 20))
+	sim.tick()
+	_check(sim.dragon_state == VillageSim.DragonState.WAITING, "dragon doesn't arrive the moment the village is big enough")
+
+
+func _test_dragon_arrival_time_varies() -> void:
+	var times := {}
+	for dragon_seed in range(30):
+		var timer := VillageSim.new(10, 10, 1, dragon_seed).dragon_timer
+		_check(timer >= VillageSim.FIRST_DRAGON_WAIT_TICKS.x and timer <= VillageSim.FIRST_DRAGON_WAIT_TICKS.y, "first wait in range")
+		times[timer] = true
+	_check(times.size() > 10, "arrival time varies: %d different" % times.size())
+	_check(VillageSim.FIRST_DRAGON_WAIT_TICKS.y < 420, "dragons come sooner than before")
+
+
+func _test_dragon_visits_stay_and_strike_more_than_once() -> void:
+	var stays := {}
+	var multi_strike := 0
+	for dragon_seed in range(20):
+		var result := _visit(_village(40, dragon_seed))
+		_check(result.left and not result.driven_off, "undefended dragon leaves on its own")
+		var level: Dictionary = VillageSim.DRAGON_LEVELS[1]
+		var shortest: int = level.stay.x
+		_check(result.rampage >= mini(shortest, VillageSim.DRAGON_FIRST_STRIKE_TICK) , "dragon stays a while")
+		stays[result.rampage] = true
+		if result.strikes >= 2:
+			multi_strike += 1
+	_check(stays.size() >= 3, "how long it stays varies: %d different" % stays.size())
+	_check(multi_strike >= 10, "dragons usually strike more than once: %d of 20" % multi_strike)
+
+
+func _test_dragon_damage_limits_and_variety() -> void:
+	for size: int in [11, 20, 45, 120]:
+		var losses := {}
+		for dragon_seed in range(25):
+			var result := _visit(_village(size, dragon_seed))
+			_check(result.destroyed >= 1, "undefended dragon destroys something")
+			_check(result.destroyed / float(result.buildings_before) < 0.1, "level 1: %d of %d is under 10%%" % [result.destroyed, result.buildings_before])
+			losses[result.destroyed] = true
+		if size == 120:
+			_check(losses.size() >= 3, "damage varies: %d different" % losses.size())
+
+
+func _test_dragons_keep_coming_and_level_up() -> void:
+	var sim := _village(60, 9)
+	var levels: Array[int] = []
+	for visit in range(5):
+		var result := _visit(sim)
+		levels.append(result.level)
+		var limit := 0.1 if result.level == 1 else 0.2
+		_check(result.destroyed / float(result.buildings_before) < limit, "visit %d (level %d) stays under its limit" % [visit + 1, result.level])
+		# Rebuild so the village stays big enough for level 2.
+		while sim.building_count() < 60:
+			_village_fill(sim)
+	_check(levels.slice(0, VillageSim.LEVEL_2_FROM_VISIT - 1).all(func(level: int) -> bool: return level == 1), "early dragons are level 1: %s" % [levels])
+	_check(levels[VillageSim.LEVEL_2_FROM_VISIT - 1] == 2, "level 2 arrives on visit %d: %s" % [VillageSim.LEVEL_2_FROM_VISIT, levels])
+	_check(sim.dragon_visits == 5, "five visits happened")
+
+	var level_1_stays: Array[int] = []
+	var level_2_stays: Array[int] = []
+	var level_1_losses := 0.0
+	var level_2_losses := 0.0
+	for dragon_seed in range(12):
+		var village := _village(60, dragon_seed)
+		for visit in range(VillageSim.LEVEL_2_FROM_VISIT):
+			var result := _visit(village)
+			while village.building_count() < 60:
+				_village_fill(village)
+			if result.level == 1:
+				level_1_stays.append(result.rampage)
+				level_1_losses += result.destroyed
+			else:
+				level_2_stays.append(result.rampage)
+				level_2_losses += result.destroyed
+	var average := func(values: Array[int]) -> float:
+		return values.reduce(func(total: int, value: int) -> int: return total + value, 0) / float(values.size())
+	_check(average.call(level_2_stays) > average.call(level_1_stays), "level 2 stays longer: %.1f vs %.1f" % [average.call(level_2_stays), average.call(level_1_stays)])
+	_check(level_2_losses / level_2_stays.size() > level_1_losses / level_1_stays.size(), "level 2 does more damage")
+
+
+func _village_fill(sim: VillageSim) -> void:
+	for y in range(40):
+		for x in range(40):
+			if sim.place(&"farm", Vector2i(x, y)):
+				return
+
+
+func _test_small_villages_only_see_level_1() -> void:
+	var sim := _village(VillageSim.LEVEL_2_MIN_BUILDINGS - 5, 4)
+	for visit in range(4):
+		var result := _visit(sim)
+		_check(result.level == 1, "a small village only meets level 1")
+		while sim.building_count() < VillageSim.LEVEL_2_MIN_BUILDINGS - 5:
+			_village_fill(sim)
+
+
+func _test_dragon_choice_of_target() -> void:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.wood = 10000
+	sim.place(&"farm", Vector2i(10, 10))
+	sim.place(&"house", Vector2i(30, 10))
+	sim.place(&"lumber_camp", Vector2i(10, 30))
+	sim.place(&"tower", Vector2i(30, 30))
+	sim.place(&"training_center", Vector2i(20, 32))
+	sim.dragon_level = 1
+	_check(sim.dragon_interest(Vector2i(10, 10)) > sim.dragon_interest(Vector2i(30, 10)), "level 1 prefers farms to houses")
+	_check(sim.dragon_interest(Vector2i(30, 10)) > sim.dragon_interest(Vector2i(30, 30)), "level 1 avoids towers")
+	var farm_alone := sim.dragon_interest(Vector2i(10, 10))
+	sim.place(&"tower", Vector2i(12, 10))
+	_check(sim.dragon_interest(Vector2i(10, 10)) < farm_alone, "a tower nearby puts a level 1 dragon off")
+	sim.dragon_level = 2
+	_check(sim.dragon_interest(Vector2i(20, 32)) > sim.dragon_interest(Vector2i(10, 30)), "level 2 goes after training centers")
+	_check(sim.dragon_interest(Vector2i(30, 30)) > sim.dragon_interest(Vector2i(10, 30)), "level 2 goes after towers")
+
+
+func _test_strikes_burn_the_closest_buildings() -> void:
+	var sim := _village(120, 3)
+	var lost: Array[Vector2i] = []
+	var target := [Vector2i.ZERO]
+	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
+		if lost.is_empty():
+			target[0] = sim.dragon_previous_target
+			lost.assign(destroyed))
+	_run_dragon(sim, VillageSim.DragonState.RAMPAGE)
+	var aim := sim.dragon_target
+	while lost.is_empty():
+		sim.tick()
+	_check(target[0] == aim, "strike lands where the dragon aimed")
+	var farthest_lost := 0
+	for cell in lost:
+		farthest_lost = maxi(farthest_lost, cell.distance_squared_to(aim))
+	for y in range(40):
+		for x in range(40):
+			if sim.building_at(Vector2i(x, y)) != &"":
+				_check(Vector2i(x, y).distance_squared_to(aim) >= farthest_lost, "closest buildings burn first")
+
+
+func _test_demolishing_during_approach_saves_the_village() -> void:
+	var sim := _village(12)
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	sim.demolish(sim.dragon_target)
+	sim.demolish(_first_building(sim))
+	var remaining := sim.building_count()
+	var result := _visit(sim)
+	_check(result.destroyed == 0, "too small a village loses nothing")
+	_check(sim.building_count() == remaining, "buildings survive")
+
+
+func _test_can_rebuild_on_scorched_ground() -> void:
+	var sim := _village(30)
+	var lost: Array[Vector2i] = []
+	sim.dragon_struck.connect(func(destroyed: Array[Vector2i], _burned: Array[Vector2i]) -> void:
+		lost.append_array(destroyed))
+	_visit(sim)
+	var cell := lost[0]
+	_check(sim.is_scorched(cell), "destroyed building leaves scorched ground")
+	_check(sim.place(&"house", cell), "can rebuild on scorched ground")
+	_check(not sim.is_scorched(cell), "rebuilding clears the scorch")
+
+
+## A village with towers built right beside each place the dragon could aim.
+func _towered_village(towers: int, water: int, dragon_seed := 3) -> VillageSim:
+	var sim := _village(40, dragon_seed)
+	sim.wood = 100000
+	# Spread evenly around the village, so no side is left open.
+	var placed := 0
+	for index in range(towers * 4):
+		if placed == towers:
+			break
+		var angle := TAU * index / towers
+		var cell := Vector2i((Vector2(20, 20) + Vector2.from_angle(angle) * (5 + index / towers)).round())
+		if sim.place(&"tower", cell):
+			placed += 1
+	_check(placed == towers, "placed %d towers" % placed)
+	sim.water = water
+	return sim
+
+
+func _test_towers_drive_off_the_dragon() -> void:
+	var undefended := 0
+	var defended := 0
+	var driven_off := 0
+	for dragon_seed in range(10):
+		undefended += _visit(_village(40, dragon_seed)).destroyed
+		var sim := _towered_village(12, 5000, dragon_seed)
+		var result := _visit(sim)
+		defended += result.destroyed
+		if result.driven_off:
+			driven_off += 1
+			_check(sim.dragon_resolve == 0, "driven off means its resolve is gone")
+		_check(result.hits > 0 and sim.water < result.water_before, "towers spend water to hit the dragon")
+	_check(driven_off >= 8, "towers usually drive it off: %d of 10" % driven_off)
+	_check(defended < undefended, "defended villages lose less: %d vs %d" % [defended, undefended])
+
+
+func _test_defense_needs_water_and_range() -> void:
+	var dry := _towered_village(12, 0)
+	var dry_result := _visit(dry)
+	_check(dry_result.hits == 0 and not dry_result.driven_off, "no water, no defense")
+
+	var far := _village(40, 3)
+	far.wood = 100000
+	far.water = 5000
+	for y in range(40):
+		for x in range(40):
+			if Vector2(x, y).distance_to(Vector2(20, 20)) > 16:
+				far.place(&"tower", Vector2i(x, y))
+	var far_result := _visit(far)
+	_check(far_result.hits == 0, "towers out of range don't reach the dragon")
+	_check(far.water >= 5000 - 200, "out-of-range towers don't waste water")
+
+
+func _test_dragon_spares_roads() -> void:
+	var sim := _village(30, 4)
+	var road_cells: Array[Vector2i] = []
+	for y in range(40):
+		for x in range(40):
+			if sim.place_road(Vector2i(x, y)):
+				road_cells.append(Vector2i(x, y))
+	var result := _visit(sim)
+	_check(result.destroyed >= 1 and result.destroyed / float(result.buildings_before) < 0.1, "roads don't affect the 10% limit")
+	for cell in road_cells:
+		_check(sim.has_road(cell) and not sim.is_scorched(cell), "road survives dragon")
+
+
+func _test_training_makes_fighters() -> void:
+	var sim := _settled({
+		Vector2i(20, 20): &"house", Vector2i(20, 22): &"house", Vector2i(23, 20): &"training_center",
+		Vector2i(23, 22): &"farm", Vector2i(26, 20): &"well", Vector2i(26, 22): &"lumber_camp",
+	}, 8)
+	sim.tick()
+	_check(sim.workers_at(Vector2i(23, 20)) == 2, "two people train at a time")
+	var trainee_index := -1
+	for index in range(sim.villagers.size()):
+		if sim.villagers[index].job == Vector2i(23, 20):
+			trainee_index = index
+	var trainee := sim.villagers[trainee_index]
+	var inside := 0
+	while not sim.is_fighter(trainee) and sim.tick_count < 2000:
+		var was_inside := trainee.state == Villager.State.WORKING
+		var before := trainee.training
+		sim.tick()
+		if not was_inside:
+			_check(trainee.training == before, "training only happens inside")
+		else:
+			inside += 1
+	_check(sim.is_fighter(trainee), "staying long enough makes a fighter")
+	_check(inside == VillageSim.TRAINING_TICKS, "it takes %d ticks inside: %d" % [VillageSim.TRAINING_TICKS, inside])
+	sim.tick()
+	_check(trainee.job != Vector2i(23, 20), "a trained fighter goes back to other work")
+	_check(sim.workers_at(Vector2i(23, 20)) == 2, "someone else takes the training place")
+	var saved := VillageSim.from_save_data(sim.to_save_data())
+	_check(saved != null and saved.fighter_count() == sim.fighter_count(), "training is saved")
+	for i in range(400):
+		sim.tick()
+	_check(sim.fighter_count() >= 4, "the center keeps training people: %d" % sim.fighter_count())
+	for villager in sim.villagers:
+		if sim.is_fighter(villager):
+			_check(villager.job != Vector2i(23, 20), "fighters don't retrain")
+
+
+func _test_fighters_rush_to_the_dragon_and_throw_water() -> void:
+	var sim := _village(40, 6)
+	sim.wood = 100000
+	for y: int in [33, 35]:
+		for x in range(10, 30, 2):
+			sim.place(&"house", Vector2i(x, y))
+	sim.population = sim.housing()
+	sim.water = 5000
+	sim.food = 5000
+	sim.tick()
+	for villager in sim.villagers:
+		villager.training = VillageSim.TRAINING_TICKS
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	var fighters_walking := sim.villagers.filter(func(villager: Villager) -> bool:
+		return villager.state == Villager.State.WALKING).size()
+	_check(fighters_walking > sim.villagers.size() / 2, "fighters head for the dragon: %d" % fighters_walking)
+	var result := _visit(sim)
+	var villager_throws: int = result.attackers.filter(func(cell: Vector2i) -> bool: return sim.building_at(cell) != &"tower").size()
+	_check(villager_throws > 0, "fighters throw water")
+	_check(result.driven_off, "a crowd of fighters drives the dragon off")
+	for i in range(40):
+		sim.tick()
+	var near := sim.villagers.filter(func(villager: Villager) -> bool:
+		return villager.state == Villager.State.OUTSIDE and sim._near_dragon(villager.cell)).size()
+	_check(near < sim.villagers.size(), "fighters go back to their routine afterward")
+
+
+func _test_dragon_survives_save_and_load() -> void:
+	for state: VillageSim.DragonState in [VillageSim.DragonState.INBOUND, VillageSim.DragonState.RAMPAGE, VillageSim.DragonState.DEPARTING]:
+		var sim := _towered_village(2, 300, 5)
+		_run_dragon(sim, state)
+		if state == VillageSim.DragonState.RAMPAGE:
+			for i in range(3):
+				sim.tick()
+		SaveGame.write(sim, TEST_SAVE)
+		var loaded := SaveGame.read(TEST_SAVE)
+		_check(loaded != null, "mid-visit save loads")
+		if loaded == null:
+			return
+		_check(loaded.to_save_data() == sim.to_save_data(), "mid-visit save matches")
+		for i in range(40):
+			sim.tick()
+			loaded.tick()
+		_check(loaded.to_save_data() == sim.to_save_data(), "loaded dragon behaves identically")
+		_check(loaded.dragon_state == VillageSim.DragonState.WAITING, "the visit ends and the next dragon waits")
+	var data := _village(20).to_save_data()
+	for change: Array in [["dragon_level", 9], ["dragon_resolve", -4], ["dragon_visits", "x"], ["dragon_state", 3]]:
+		var bad := data.duplicate(true)
+		bad[change[0]] = change[1]
+		_check(VillageSim.from_save_data(bad) == null, "rejects bad %s" % change[0])
+
+
+func _test_older_saves_get_more_dragons() -> void:
+	var sim := _village(30, 2)
+	_visit(sim)
+	_run_dragon(sim, VillageSim.DragonState.WAITING)
+	var data := sim.to_save_data()
+	data.version = 5
+	data.dragon_state = VillageSim.DragonState.GONE
+	for key: String in ["dragon_level", "dragon_visits", "dragon_resolve", "dragon_stay", "dragon_budget",
+			"dragon_destroyed", "dragon_rampage_ticks", "dragon_previous_x", "dragon_previous_y"]:
+		data.erase(key)
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null, "a save from the one-dragon days loads")
+	if loaded == null:
+		return
+	_check(loaded.dragon_state == VillageSim.DragonState.WAITING and loaded.dragon_visits == 1, "its dragon will come back")
+	var next := _visit(loaded)
+	_check(next.left and next.level == 1, "the next dragon is level 1")
+	var with_villagers := _settled({Vector2i(20, 20): &"house"}, 2).to_save_data()
+	with_villagers.version = 5
+	for villager: Dictionary in with_villagers.villagers:
+		villager.erase("training")
+	var old_people := VillageSim.from_save_data(with_villagers)
+	_check(old_people != null and old_people.fighter_count() == 0, "older villagers start untrained")

@@ -18,6 +18,8 @@ var progress := 0.0
 var from_building := NO_CELL
 var to_building := NO_CELL
 var layout_version := 0
+## Ticks spent inside a training center. VillageSim.TRAINING_TICKS makes a fighter.
+var training := 0
 
 
 func trip_end() -> float:
@@ -38,4 +40,5 @@ func to_data() -> Dictionary:
 		"progress": progress,
 		"from_building": [from_building.x, from_building.y],
 		"to_building": [to_building.x, to_building.y],
+		"training": training,
 	}

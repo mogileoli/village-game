@@ -5,14 +5,15 @@ extends RefCounted
 
 signal cell_changed(cell: Vector2i)
 signal stats_changed
-signal dragon_incoming(target: Vector2i)
+signal dragon_incoming(target: Vector2i, level: int)
 signal dragon_struck(destroyed: Array[Vector2i], burned: Array[Vector2i])
-## Sent just before dragon_struck when towers fight back. Each defender saved
-## one of the threatened buildings, so all were saved if the counts match.
-signal dragon_defended(defenders: Array[Vector2i], threatened: int)
+## Towers and trained villagers threw water at the dragon from these cells.
+signal dragon_hit(attackers: Array[Vector2i], damage: int)
+signal dragon_left(driven_off: bool, destroyed: int)
 
 enum Terrain { GRASS, WATER, FOREST }
-enum DragonState { WAITING, INBOUND, DEPARTING, GONE }
+## GONE only appears in saves from when there was one dragon per game.
+enum DragonState { WAITING, INBOUND, DEPARTING, GONE, RAMPAGE }
 
 const BUILDINGS := {
 	&"house": {"name": "House", "cost": 10, "housing": 4},
@@ -20,20 +21,27 @@ const BUILDINGS := {
 	&"lumber_camp": {"name": "Lumber Camp", "cost": 15, "wood": 2, "jobs": 2},
 	&"well": {"name": "Well", "cost": 15, "water": 3, "jobs": 2},
 	&"tower": {"name": "Tower", "cost": 40, "defense": true},
+	&"training_center": {"name": "Training Center", "label": "Training", "cost": 30, "training": 1, "jobs": 2},
 }
 const POPULATION_INTERVAL := 5
 ## Every this many ticks, each villager eats 1 food and drinks 1 water.
 const MEAL_INTERVAL := 4
 ## Shortages never drive out the last few villagers, so a village can recover.
 const FOUNDERS := 4
-const PRODUCTS := ["wood", "food", "water"]
-## Towers defend buildings within this many cells of where the dragon strikes.
+const PRODUCTS := ["wood", "food", "water", "training"]
+## Ticks a villager has to spend inside a training center to become a fighter.
+const TRAINING_TICKS := 45
+## Towers reach a dragon this many cells away, and fighters reach FIGHTER_RANGE.
 const TOWER_RANGE := 6.0
-const TOWER_WATER_PER_DEFENSE := 25
+const TOWER_SHOT_WATER := 5
+const TOWER_DAMAGE := 6
+const FIGHTER_RANGE := 4.0
+const FIGHTER_SHOT_WATER := 2
+const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 5
+const SAVE_VERSION := 6
 const ROAD_COST := 1
 ## Cells walked per tick. Path costs match them, so paths take the quickest route.
 const GRASS_WALK_SPEED := 0.75
@@ -49,16 +57,41 @@ const NEAREST_CELL_SEARCH := 8
 const DOOR_ORDER := [Vector2i.DOWN, Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP]
 const INVALID_CELL := Vector2i(-2, -2)
 ## One building is under 10% of the village only once there are at least 11,
-## so the dragon's timer doesn't run until then.
+## so a dragon's timer doesn't run until then.
 const DRAGON_MIN_BUILDINGS := 11
-const DRAGON_MIN_WAIT_TICKS := 120
-const DRAGON_MAX_WAIT_TICKS := 420
-const DRAGON_MIN_DAMAGE := 0.03
-const DRAGON_MAX_DAMAGE := 0.099
-const DRAGON_MIN_BURN_RADIUS := 0
-const DRAGON_MAX_BURN_RADIUS := 1
+const FIRST_DRAGON_WAIT_TICKS := Vector2i(90, 300)
+const NEXT_DRAGON_WAIT_TICKS := Vector2i(90, 210)
 const DRAGON_INBOUND_TICKS := 5
 const DRAGON_DEPARTING_TICKS := 4
+## Over the village, the dragon strikes on this tick and then every interval.
+const DRAGON_FIRST_STRIKE_TICK := 2
+const DRAGON_STRIKE_INTERVAL := 4
+const LEVEL_2_FROM_VISIT := 3
+const LEVEL_2_MIN_BUILDINGS := 25
+## Per level: resolve is how much water damage drives it off; stay is its base
+## time over the village, plus a tick per buildings_per_extra_tick buildings;
+## damage is the share of buildings it may destroy in a visit; appetite and
+## caution steer what it attacks (see dragon_interest).
+const DRAGON_LEVELS := {
+	1: {
+		"resolve": 60, "stay": Vector2i(10, 13), "buildings_per_extra_tick": 10, "max_extra_stay": 6,
+		"damage": Vector2(0.03, 0.099), "burn_radius": Vector2i(0, 1), "caution": 2.0,
+		"appetite": {&"farm": 3.0, &"house": 2.0, &"lumber_camp": 1.5, &"well": 1.0, &"training_center": 1.0, &"tower": 0.0},
+	},
+	2: {
+		"resolve": 150, "stay": Vector2i(16, 20), "buildings_per_extra_tick": 8, "max_extra_stay": 10,
+		"damage": Vector2(0.10, 0.199), "burn_radius": Vector2i(1, 1), "caution": 0.5,
+		"appetite": {&"training_center": 4.0, &"tower": 3.5, &"house": 2.5, &"farm": 2.0, &"well": 2.0, &"lumber_camp": 1.5},
+	},
+}
+const DRAGON_CLUSTER_DISTANCE := 2
+const DRAGON_CLUSTER_BONUS := 0.25
+const FIGHTER_CAUTION_SHARE := 0.25
+## A random nudge to each building's appeal, so dragons don't always pick the same one.
+const DRAGON_WHIM := 0.5
+const DRAGON_SALT_PLAN := 1000
+const DRAGON_SALT_NEXT_WAIT := 2000
+const DRAGON_SALT_FIRST_TARGET := 3000
 
 var width: int
 var height: int
@@ -71,6 +104,15 @@ var dragon_state := DragonState.WAITING
 var dragon_timer := 0
 var dragon_target := Vector2i.ZERO
 var dragon_seed := 0
+var dragon_level := 1
+## Visits begun so far, including the current one.
+var dragon_visits := 0
+var dragon_resolve := 0
+var dragon_stay := 0
+var dragon_budget := 0
+var dragon_destroyed := 0
+var dragon_rampage_ticks := 0
+var dragon_previous_target := Vector2i.ZERO
 var villagers: Array[Villager] = []
 
 var _terrain := PackedByteArray()
@@ -91,7 +133,7 @@ func _init(map_width := 40, map_height := 40, map_seed := 1, new_dragon_seed := 
 	height = map_height
 	_generate_terrain(map_seed)
 	dragon_seed = randi() if new_dragon_seed < 0 else new_dragon_seed
-	dragon_timer = _dragon_rng(0).randi_range(DRAGON_MIN_WAIT_TICKS, DRAGON_MAX_WAIT_TICKS)
+	dragon_timer = _visit_rng(0).randi_range(FIRST_DRAGON_WAIT_TICKS.x, FIRST_DRAGON_WAIT_TICKS.y)
 	_rebuild_grid()
 
 
@@ -229,9 +271,15 @@ func tick() -> void:
 	_update_jobs()
 	for villager in villagers:
 		if villager.state == Villager.State.WORKING:
-			wood += BUILDINGS[_buildings[villager.job]].get("wood", 0)
-			food += BUILDINGS[_buildings[villager.job]].get("food", 0)
-			water += BUILDINGS[_buildings[villager.job]].get("water", 0)
+			var workplace: Dictionary = BUILDINGS[_buildings[villager.job]]
+			wood += workplace.get("wood", 0)
+			food += workplace.get("food", 0)
+			water += workplace.get("water", 0)
+			if workplace.has("training") and not is_fighter(villager):
+				villager.training += workplace.training
+				if is_fighter(villager):
+					# Trained: free the place for someone else.
+					_jobs_need_update = true
 	for index in range(villagers.size()):
 		_advance_villager(villagers[index], index)
 
@@ -284,6 +332,15 @@ func to_save_data() -> Dictionary:
 		"dragon_target_x": dragon_target.x,
 		"dragon_target_y": dragon_target.y,
 		"dragon_seed": dragon_seed,
+		"dragon_level": dragon_level,
+		"dragon_visits": dragon_visits,
+		"dragon_resolve": dragon_resolve,
+		"dragon_stay": dragon_stay,
+		"dragon_budget": dragon_budget,
+		"dragon_destroyed": dragon_destroyed,
+		"dragon_rampage_ticks": dragon_rampage_ticks,
+		"dragon_previous_x": dragon_previous_target.x,
+		"dragon_previous_y": dragon_previous_target.y,
 	}
 
 
@@ -331,29 +388,29 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 	if version >= 3 and not sim._load_roads(data):
 		return null
 	# Saves from before the dragon keep the new dragon chosen by _init().
-	if version >= 2 and not sim._load_dragon(data):
+	if version >= 2 and not sim._load_dragon(data, version):
 		return null
 	sim._rebuild_grid()
 	# Saves from before villagers were simulated get new ones from the population.
-	if version >= 4 and not sim._load_villagers(data):
+	if version >= 4 and not sim._load_villagers(data, version):
 		return null
 	if version < 5:
 		sim.water = sim.population * OLD_SAVE_WATER_TICKS / MEAL_INTERVAL
 	return sim
 
 
-func _load_villagers(data: Dictionary) -> bool:
+func _load_villagers(data: Dictionary, version: int) -> bool:
 	if not data.get("villagers") is Array or data.villagers.size() != population:
 		return false
 	for entry: Variant in data.villagers:
-		var villager := _read_villager(entry)
+		var villager := _read_villager(entry, version)
 		if villager == null:
 			return false
 		villagers.append(villager)
 	return true
 
 
-func _read_villager(entry: Variant) -> Villager:
+func _read_villager(entry: Variant, version: int) -> Villager:
 	if not entry is Dictionary or not entry.get("path") is Array:
 		return null
 	var villager := Villager.new()
@@ -364,6 +421,9 @@ func _read_villager(entry: Variant) -> Villager:
 	villager.to_building = _read_cell(entry.get("to_building"))
 	var state := _whole_number(entry, "state")
 	villager.timer = _whole_number(entry, "timer")
+	villager.training = _whole_number(entry, "training") if version >= 6 else 0
+	if villager.training < 0:
+		return null
 	if state < 0 or state >= Villager.State.size() or villager.timer < 0:
 		return null
 	villager.state = state as Villager.State
@@ -412,7 +472,24 @@ func _load_roads(data: Dictionary) -> bool:
 	return true
 
 
-func _load_dragon(data: Dictionary) -> bool:
+func _load_dragon_visit(data: Dictionary) -> bool:
+	dragon_level = _whole_number(data, "dragon_level")
+	dragon_visits = _whole_number(data, "dragon_visits")
+	dragon_resolve = _whole_number(data, "dragon_resolve")
+	dragon_stay = _whole_number(data, "dragon_stay")
+	dragon_budget = _whole_number(data, "dragon_budget")
+	dragon_destroyed = _whole_number(data, "dragon_destroyed")
+	dragon_rampage_ticks = _whole_number(data, "dragon_rampage_ticks")
+	dragon_previous_target = Vector2i(_whole_number(data, "dragon_previous_x"), _whole_number(data, "dragon_previous_y"))
+	if not DRAGON_LEVELS.has(dragon_level) or dragon_state == DragonState.GONE:
+		return false
+	for value in [dragon_visits, dragon_resolve, dragon_stay, dragon_budget, dragon_destroyed, dragon_rampage_ticks]:
+		if value < 0:
+			return false
+	return in_bounds(dragon_previous_target)
+
+
+func _load_dragon(data: Dictionary, version: int) -> bool:
 	var state := _whole_number(data, "dragon_state")
 	dragon_timer = _whole_number(data, "dragon_timer")
 	dragon_seed = _whole_number(data, "dragon_seed")
@@ -422,6 +499,20 @@ func _load_dragon(data: Dictionary) -> bool:
 	if not in_bounds(dragon_target) or not data.get("scorched") is Array:
 		return false
 	dragon_state = state as DragonState
+	if version >= 6:
+		if not _load_dragon_visit(data):
+			return false
+	elif dragon_state == DragonState.GONE:
+		# Saves from when only one dragon came: the next one is on its way.
+		dragon_visits = 1
+		dragon_state = DragonState.WAITING
+		dragon_timer = _visit_rng(DRAGON_SALT_NEXT_WAIT).randi_range(NEXT_DRAGON_WAIT_TICKS.x, NEXT_DRAGON_WAIT_TICKS.y)
+	elif dragon_state != DragonState.WAITING:
+		dragon_visits = 1
+		_plan_visit()
+		dragon_previous_target = dragon_target
+		if dragon_state == DragonState.DEPARTING:
+			dragon_destroyed = dragon_budget
 	for entry: Variant in data.scorched:
 		if not entry is Dictionary:
 			return false
@@ -443,43 +534,140 @@ static func _whole_number(data: Dictionary, key: String) -> int:
 
 
 func _advance_dragon() -> void:
-	if dragon_state == DragonState.GONE:
-		return
-	if dragon_state == DragonState.WAITING and _buildings.size() < DRAGON_MIN_BUILDINGS:
-		return
-	dragon_timer -= 1
-	if dragon_timer > 0:
-		return
 	match dragon_state:
 		DragonState.WAITING:
-			_dragon_set_off()
+			if _buildings.size() < DRAGON_MIN_BUILDINGS:
+				return
+			dragon_timer -= 1
+			if dragon_timer <= 0:
+				_dragon_set_off()
 		DragonState.INBOUND:
-			_dragon_strike()
+			dragon_timer -= 1
+			if dragon_timer <= 0:
+				dragon_state = DragonState.RAMPAGE
+				dragon_rampage_ticks = 0
+		DragonState.RAMPAGE:
+			_dragon_rampage_tick()
 		DragonState.DEPARTING:
-			dragon_state = DragonState.GONE
+			dragon_timer -= 1
+			if dragon_timer <= 0:
+				dragon_state = DragonState.WAITING
+				dragon_timer = _visit_rng(DRAGON_SALT_NEXT_WAIT).randi_range(NEXT_DRAGON_WAIT_TICKS.x, NEXT_DRAGON_WAIT_TICKS.y)
+
+
+func dragon_is_visiting() -> bool:
+	return dragon_state in [DragonState.INBOUND, DragonState.RAMPAGE]
+
+
+func dragon_max_resolve() -> int:
+	return DRAGON_LEVELS[dragon_level].resolve
+
+
+## Ticks until the next strike, or -1 if no more strikes are planned this visit.
+func dragon_ticks_until_strike() -> int:
+	if dragon_state == DragonState.INBOUND:
+		return dragon_timer + DRAGON_FIRST_STRIKE_TICK
+	if dragon_state != DragonState.RAMPAGE:
+		return -1
+	var next := DRAGON_FIRST_STRIKE_TICK
+	while next <= dragon_rampage_ticks:
+		next += DRAGON_STRIKE_INTERVAL
+	return next - dragon_rampage_ticks if next <= dragon_stay else -1
+
+
+## The rampage tick of the latest strike, or 0 before the first one.
+func dragon_last_strike_tick() -> int:
+	if dragon_rampage_ticks < DRAGON_FIRST_STRIKE_TICK:
+		return 0
+	var since_first := dragon_rampage_ticks - DRAGON_FIRST_STRIKE_TICK
+	return dragon_rampage_ticks - since_first % DRAGON_STRIKE_INTERVAL
+
+
+## How much this visit's dragon wants to attack a building. It's drawn to the
+## building types it likes and to clusters, and put off by nearby defenses,
+## though a level 2 dragon is much bolder than a level 1.
+func dragon_interest(cell: Vector2i) -> float:
+	var level: Dictionary = DRAGON_LEVELS[dragon_level]
+	var interest: float = level.appetite.get(_buildings.get(cell, &""), 1.0)
+	for other: Vector2i in _buildings:
+		if other != cell and _distance(other, cell) <= DRAGON_CLUSTER_DISTANCE:
+			interest += DRAGON_CLUSTER_BONUS
+	for tower in towers():
+		if Vector2(tower).distance_to(Vector2(cell)) <= TOWER_RANGE:
+			interest -= level.caution
+	for villager in villagers:
+		if is_fighter(villager) and Vector2(villager.cell).distance_to(Vector2(cell)) <= FIGHTER_RANGE:
+			interest -= level.caution * FIGHTER_CAUTION_SHARE
+	return interest
 
 
 func _dragon_set_off() -> void:
-	var cells := _buildings.keys()
-	cells.sort()
-	dragon_target = cells[_dragon_rng(2).randi_range(0, cells.size() - 1)]
+	dragon_visits += 1
+	var big_enough := _buildings.size() >= LEVEL_2_MIN_BUILDINGS
+	dragon_level = 2 if dragon_visits >= LEVEL_2_FROM_VISIT and big_enough else 1
+	_plan_visit()
+	dragon_target = _choose_dragon_target(DRAGON_SALT_FIRST_TARGET)
+	dragon_previous_target = dragon_target
 	dragon_state = DragonState.INBOUND
 	dragon_timer = DRAGON_INBOUND_TICKS
-	dragon_incoming.emit(dragon_target)
+	dragon_incoming.emit(dragon_target, dragon_level)
+	_call_fighters()
 
 
-## Burns the buildings closest to the target. The player may have demolished
-## buildings during the approach, and then the 10% limit could not be met.
+## Decides how long the dragon stays and how many buildings it may destroy.
+## Both grow with the village, and both are bigger for a level 2 dragon.
+func _plan_visit() -> void:
+	var level: Dictionary = DRAGON_LEVELS[dragon_level]
+	var rng := _visit_rng(DRAGON_SALT_PLAN)
+	var base_stay: Vector2i = level.stay
+	var damage: Vector2 = level.damage
+	dragon_resolve = level.resolve
+	dragon_stay = rng.randi_range(base_stay.x, base_stay.y) + mini(
+		level.max_extra_stay, _buildings.size() / level.buildings_per_extra_tick
+	)
+	dragon_budget = maxi(floori(_buildings.size() * rng.randf_range(damage.x, damage.y)), 1)
+	dragon_destroyed = 0
+	dragon_rampage_ticks = 0
+
+
+func _choose_dragon_target(salt: int) -> Vector2i:
+	var rng := _visit_rng(salt)
+	var cells: Array[Vector2i] = _buildings.keys()
+	cells.sort()
+	var best := dragon_target
+	var best_interest := -INF
+	for cell in cells:
+		var interest := dragon_interest(cell) + rng.randf() * DRAGON_WHIM
+		if interest > best_interest:
+			best_interest = interest
+			best = cell
+	return best
+
+
+func _dragon_rampage_tick() -> void:
+	dragon_rampage_ticks += 1
+	_defenders_attack()
+	if dragon_resolve <= 0:
+		_dragon_leave(true)
+		return
+	if dragon_last_strike_tick() == dragon_rampage_ticks:
+		_dragon_strike()
+	if dragon_state == DragonState.RAMPAGE and (
+		dragon_rampage_ticks >= dragon_stay or dragon_destroyed >= dragon_budget
+	):
+		_dragon_leave(false)
+
+
+## Burns the buildings closest to the target, spreading the visit's damage over
+## its remaining strikes. If the player demolished buildings during the visit,
+## the limit can't be met, so a too-small village loses nothing.
 func _dragon_strike() -> void:
-	dragon_state = DragonState.DEPARTING
-	dragon_timer = DRAGON_DEPARTING_TICKS
 	var destroyed: Array[Vector2i] = []
 	var burned: Array[Vector2i] = []
-	if _buildings.size() >= DRAGON_MIN_BUILDINGS:
-		var rng := _dragon_rng(1)
-		var damage := rng.randf_range(DRAGON_MIN_DAMAGE, DRAGON_MAX_DAMAGE)
-		var count := maxi(floori(_buildings.size() * damage), 1)
-		count -= _defend_with_towers(count)
+	var remaining := dragon_budget - dragon_destroyed
+	if _buildings.size() >= DRAGON_MIN_BUILDINGS and remaining > 0:
+		var strikes_left := 1 + (dragon_stay - dragon_rampage_ticks) / DRAGON_STRIKE_INTERVAL
+		var count := mini(remaining, ceili(float(remaining) / strikes_left))
 		var cells: Array[Vector2i] = _buildings.keys()
 		cells.sort_custom(_closer_to_dragon)
 		destroyed = cells.slice(0, count)
@@ -488,27 +676,88 @@ func _dragon_strike() -> void:
 			_layout_changed(cell)
 			cell_changed.emit(cell)
 		population = mini(population, housing())
-		burned = _burn_around(destroyed, rng.randi_range(DRAGON_MIN_BURN_RADIUS, DRAGON_MAX_BURN_RADIUS))
+		var radius: Vector2i = DRAGON_LEVELS[dragon_level].burn_radius
+		burned = _burn_around(destroyed, _visit_rng(dragon_rampage_ticks).randi_range(radius.x, radius.y))
+		dragon_destroyed += destroyed.size()
 	dragon_struck.emit(destroyed, burned)
+	if not _buildings.is_empty():
+		dragon_previous_target = dragon_target
+		dragon_target = _choose_dragon_target(DRAGON_SALT_FIRST_TARGET + dragon_rampage_ticks)
+		_call_fighters()
 
 
-## Nearest towers in range fire first, one per threatened building, while water lasts.
-## Returns how many buildings they saved.
-func _defend_with_towers(threatened: int) -> int:
-	var in_range: Array[Vector2i] = []
+func _dragon_leave(driven_off: bool) -> void:
+	dragon_state = DragonState.DEPARTING
+	dragon_timer = DRAGON_DEPARTING_TICKS
+	dragon_left.emit(driven_off, dragon_destroyed)
+
+
+## Towers and trained villagers near the dragon throw water at it while water lasts.
+func _defenders_attack() -> void:
+	var attackers: Array[Vector2i] = []
+	var damage := 0
 	for tower in towers():
-		if Vector2(tower).distance_to(Vector2(dragon_target)) <= TOWER_RANGE:
-			in_range.append(tower)
-	in_range.sort_custom(_closer_to_dragon)
-	var defenders: Array[Vector2i] = []
-	for tower in in_range:
-		if defenders.size() == threatened or water < TOWER_WATER_PER_DEFENSE:
+		if water < TOWER_SHOT_WATER:
 			break
-		water -= TOWER_WATER_PER_DEFENSE
-		defenders.append(tower)
-	if not defenders.is_empty():
-		dragon_defended.emit(defenders, threatened)
-	return defenders.size()
+		if Vector2(tower).distance_to(Vector2(dragon_target)) <= TOWER_RANGE:
+			water -= TOWER_SHOT_WATER
+			damage += TOWER_DAMAGE
+			attackers.append(tower)
+	for villager in villagers:
+		if water < FIGHTER_SHOT_WATER:
+			break
+		if is_fighter(villager) and _is_outdoors(villager) and _near_dragon(villager.cell):
+			water -= FIGHTER_SHOT_WATER
+			damage += FIGHTER_DAMAGE
+			attackers.append(villager.cell)
+	if damage > 0:
+		dragon_resolve = maxi(dragon_resolve - damage, 0)
+		dragon_hit.emit(attackers, damage)
+
+
+func _is_outdoors(villager: Villager) -> bool:
+	return villager.state in [Villager.State.WALKING, Villager.State.OUTSIDE]
+
+
+func _near_dragon(cell: Vector2i) -> bool:
+	return cell != Villager.NO_CELL and Vector2(cell).distance_to(Vector2(dragon_target)) <= FIGHTER_RANGE
+
+
+## Sends every trained villager toward the dragon's target.
+func _call_fighters() -> void:
+	for index in range(villagers.size()):
+		var villager := villagers[index]
+		if is_fighter(villager) and not _near_dragon(villager.cell):
+			_send_to_dragon(villager, index)
+
+
+func _send_to_dragon(villager: Villager, index: int) -> bool:
+	if villager.state == Villager.State.WALKING and villager.path.size() > 0 and _near_dragon(villager.path[-1]):
+		return true
+	var from_building := Villager.NO_CELL
+	if villager.state == Villager.State.AT_HOME:
+		from_building = villager.home
+	elif villager.state == Villager.State.WORKING:
+		from_building = villager.job
+	# Spread fighters around the target instead of all aiming for one cell.
+	var spread: Vector2i = DOOR_ORDER[index % DOOR_ORDER.size()] * (1 + index % 2)
+	var goal := _nearest_walkable(dragon_target + spread)
+	if villager.state == Villager.State.WALKING:
+		villager.state = Villager.State.OUTSIDE
+		villager.from_building = Villager.NO_CELL
+	return _route(villager, from_building, Villager.NO_CELL, goal)
+
+
+func is_fighter(villager: Villager) -> bool:
+	return villager.training >= TRAINING_TICKS
+
+
+func fighter_count() -> int:
+	var count := 0
+	for villager in villagers:
+		if is_fighter(villager):
+			count += 1
+	return count
 
 
 func _closer_to_dragon(a: Vector2i, b: Vector2i) -> bool:
@@ -660,6 +909,7 @@ func _assign_jobs() -> void:
 	for villager in villagers:
 		if (
 			_is_workplace(villager.job)
+			and _can_take(villager, villager.job)
 			and _can_commute(villager.home, villager.job)
 			and _workers_at.get(villager.job, 0) < BUILDINGS[_buildings[villager.job]].jobs
 		):
@@ -679,7 +929,7 @@ func _assign_jobs() -> void:
 		for workplace in all_workplaces:
 			if _workers_at.get(workplace, 0) >= BUILDINGS[_buildings[workplace]].jobs:
 				continue
-			if not _can_commute(villager.home, workplace):
+			if not _can_commute(villager.home, workplace) or not _can_take(villager, workplace):
 				continue
 			if best == Villager.NO_CELL or _better_job(workplace, best, villager.home, workers_making):
 				best = workplace
@@ -689,6 +939,7 @@ func _assign_jobs() -> void:
 			var product := _product_of(best)
 			workers_making[product] = workers_making.get(product, 0) + 1
 	_rebalance_jobs(all_workplaces, workers_making)
+	_swap_fighters_out_of_training(all_workplaces)
 
 
 ## Moves workers from the busiest product to the one with fewest workers until
@@ -726,6 +977,7 @@ func _move_a_worker(
 				_product_of(workplace) == to_product
 				and _workers_at.get(workplace, 0) < BUILDINGS[_buildings[workplace]].jobs
 				and _can_commute(villager.home, workplace)
+				and _can_take(villager, workplace)
 				and (best == Villager.NO_CELL or _distance(workplace, villager.home) < _distance(best, villager.home))
 			):
 				best = workplace
@@ -740,6 +992,42 @@ func _move_a_worker(
 		workers_making[to_product] = workers_making.get(to_product, 0) + 1
 		return true
 	return false
+
+
+## A fighter left without a job takes over an untrained villager's job, and that
+## villager takes the open training place, so training keeps going.
+func _swap_fighters_out_of_training(all_workplaces: Array[Vector2i]) -> void:
+	for fighter in villagers:
+		if fighter.job != Villager.NO_CELL or fighter.home == Villager.NO_CELL or not is_fighter(fighter):
+			continue
+		for center in all_workplaces:
+			if _product_of(center) != "training" or _workers_at.get(center, 0) >= BUILDINGS[_buildings[center]].jobs:
+				continue
+			var trainee := _untrained_worker_for(fighter, center)
+			if trainee == null:
+				continue
+			fighter.job = trainee.job
+			trainee.job = center
+			_workers_at[center] = _workers_at.get(center, 0) + 1
+			break
+
+
+func _untrained_worker_for(fighter: Villager, center: Vector2i) -> Villager:
+	for villager in villagers:
+		if (
+			not is_fighter(villager)
+			and villager.job != Villager.NO_CELL
+			and _product_of(villager.job) != "training"
+			and _can_commute(villager.home, center)
+			and _can_commute(fighter.home, villager.job)
+		):
+			return villager
+	return null
+
+
+## Fighters are already trained, so they don't take places at training centers.
+func _can_take(villager: Villager, workplace: Vector2i) -> bool:
+	return not (is_fighter(villager) and _product_of(workplace) == "training")
 
 
 func _better_job(a: Vector2i, b: Vector2i, home: Vector2i, workers_making: Dictionary[String, int]) -> bool:
@@ -810,6 +1098,12 @@ func _advance_villager(villager: Villager, index: int) -> void:
 
 
 func _start_trip(villager: Villager, index: int) -> void:
+	if is_fighter(villager) and dragon_is_visiting():
+		if _near_dragon(villager.cell) and _is_outdoors(villager):
+			villager.timer = 1
+			return
+		if _send_to_dragon(villager, index):
+			return
 	var from_building := Villager.NO_CELL
 	var to_building := Villager.NO_CELL
 	var goal := Villager.NO_CELL
@@ -897,9 +1191,10 @@ func _roll(salt: int, limits: Vector2i) -> int:
 	return limits.x + hash([dragon_seed, tick_count, salt]) % span
 
 
-func _dragon_rng(salt: int) -> RandomNumberGenerator:
+## Repeatable randomness for the current dragon visit.
+func _visit_rng(salt: int) -> RandomNumberGenerator:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([dragon_seed, salt])
+	rng.seed = hash([dragon_seed, dragon_visits, salt])
 	return rng
 
 

@@ -460,13 +460,39 @@ func _tower(image: Image, x0: int) -> void:
 	_outline(image, x0, CELL)
 
 
+func _training_center(image: Image, x0: int) -> void:
+	_shadow(image, x0 + 2, 45, 28)
+	# Plank hall with a slate roof.
+	_rect(image, x0 + 2, 28, 20, 18, WOOD_MID)
+	for x in range(x0 + 2, x0 + 22, 3):
+		_rect(image, x, 28, 1, 18, WOOD_DARK)
+	_rect(image, x0 + 9, 36, 6, 10, INK)
+	_rect(image, x0 + 10, 37, 4, 9, WOOD_DARK)
+	_polygon(image, x0, [Vector2(0, 29), Vector2(12, 16), Vector2(24, 29)], STONE_DARK)
+	_polygon(image, x0, [Vector2(3, 28), Vector2(12, 18), Vector2(21, 28)], STONE_MID)
+	for y in range(21, 28, 3):
+		_rect(image, x0 + 12 - (y - 16), y, (y - 16) * 2, 1, STONE_DARK)
+	# Banner pole with a blue water-drop flag.
+	_rect(image, x0 + 25, 6, 1, 40, WOOD_DARK)
+	_rect(image, x0 + 26, 7, 6, 8, TUNIC)
+	_rect(image, x0 + 28, 9, 2, 3, W_FOAM)
+	# Practice target: a straw dummy and a water bucket.
+	_rect(image, x0 + 27, 36, 1, 9, WOOD_DARK)
+	_ellipse(image, x0 + 27.5, 33, 3, 3, WHEAT)
+	_rect(image, x0 + 24, 37, 7, 2, WHEAT_DARK)
+	_rect(image, x0 + 22, 42, 4, 4, WOOD_MID)
+	_rect(image, x0 + 22, 42, 4, 1, W_LIGHT)
+	_outline(image, x0, CELL)
+
+
 func _save_buildings() -> void:
-	var image := _new_image(CELL * 5, BUILDING_H)
+	var image := _new_image(CELL * 6, BUILDING_H)
 	_house(image, 0)
 	_farm(image, CELL)
 	_lumber_camp(image, CELL * 2)
 	_well(image, CELL * 3)
 	_tower(image, CELL * 4)
+	_training_center(image, CELL * 5)
 	image.save_png("res://assets/tiles/buildings.png")
 
 
@@ -564,9 +590,21 @@ func _dragon_frame(image: Image, x0: int, raised: bool) -> void:
 
 
 func _save_dragon() -> void:
-	var image := _new_image(160, 56)
-	_dragon_frame(image, 0, true)
-	_dragon_frame(image, 80, false)
+	# Row 1 is the level 1 dragon. Row 2 recolors it for the level 2 dragon.
+	var image := _new_image(160, 112)
+	var frames := _new_image(160, 56)
+	_dragon_frame(frames, 0, true)
+	_dragon_frame(frames, 80, false)
+	image.blit_rect(frames, Rect2i(0, 0, 160, 56), Vector2i.ZERO)
+	var level_2_colors := {
+		D_DARK: Color8(40, 24, 72), D_MID: Color8(88, 56, 152), D_LIGHT: Color8(136, 104, 208),
+		D_BELLY: Color8(192, 232, 112), D_WING: Color8(64, 40, 112), D_HORN: Color8(248, 216, 96),
+	}
+	for y in range(56):
+		for x in range(160):
+			var color := frames.get_pixel(x, y)
+			frames.set_pixel(x, y, level_2_colors.get(color, color))
+	image.blit_rect(frames, Rect2i(0, 0, 160, 56), Vector2i(0, 56))
 	image.save_png("res://assets/tiles/dragon.png")
 
 	var shadow := _new_image(80, 40)
@@ -686,7 +724,7 @@ func _save_roads() -> void:
 # --- Villagers ---
 
 ## Draws one 12x16 frame. Direction: 0 down, 1 up, 2 side. Step: 0 or 1.
-func _villager_frame(direction: int, step: int, tunic: Color, tunic_dark: Color, hair: Color) -> Image:
+func _villager_frame(direction: int, step: int, tunic: Color, tunic_dark: Color, hair: Color, helmet := false) -> Image:
 	var image := _new_image(12, 16)
 	# Legs, alternating on each step.
 	if direction == 2:
@@ -712,6 +750,10 @@ func _villager_frame(direction: int, step: int, tunic: Color, tunic_dark: Color,
 	else:
 		_rect(image, 2, 2, 3, 5, hair)
 		_dot(image, 8, 5, INK)
+	if helmet:
+		_rect(image, 2, 1, 8, 3, STONE_LIGHT)
+		_rect(image, 2, 3, 8, 1, STONE_MID)
+		_rect(image, 5, 0, 2, 1, ROOF_MID)
 	_outline(image, 0, 12)
 	return image
 
@@ -722,13 +764,15 @@ func _save_villagers() -> void:
 		[TUNIC, W_DEEP, Color8(248, 216, 96)],
 		[ROOF_MID, ROOF_DARK, INK],
 		[Color8(136, 88, 168), Color8(96, 56, 128), WOOD_DARK],
+		# Trained fighters.
+		[TUNIC, W_DEEP, WOOD_MID, true],
 	]
 	var image := _new_image(12 * 6, 16 * looks.size())
 	for row in range(looks.size()):
 		var look: Array = looks[row]
 		for direction in range(3):
 			for step in range(2):
-				var frame := _villager_frame(direction, step, look[0], look[1], look[2])
+				var frame := _villager_frame(direction, step, look[0], look[1], look[2], look.size() > 3)
 				var at := Vector2i((direction * 2 + step) * 12, row * 16)
 				image.blit_rect(frame, Rect2i(0, 0, 12, 16), at)
 	image.save_png("res://assets/tiles/villagers.png")
@@ -795,6 +839,16 @@ func _save_icons() -> void:
 	_rect(water_icon, 4, 6, 1, 3, W_FOAM)
 	_outline(water_icon, 0, 12)
 	water_icon.save_png("res://assets/ui/icon_water.png")
+
+	var fighter_icon := _new_image(12, 12)
+	_ellipse(fighter_icon, 5.5, 5, 4.5, 4, STONE_LIGHT)
+	_rect(fighter_icon, 1, 5, 10, 2, STONE_MID)
+	_rect(fighter_icon, 5, 0, 2, 2, ROOF_MID)
+	_rect(fighter_icon, 3, 7, 6, 3, SKIN)
+	_dot(fighter_icon, 4, 8, INK)
+	_dot(fighter_icon, 7, 8, INK)
+	_outline(fighter_icon, 0, 12)
+	fighter_icon.save_png("res://assets/ui/icon_fighter.png")
 
 
 ## A speech bubble with an exclamation mark.

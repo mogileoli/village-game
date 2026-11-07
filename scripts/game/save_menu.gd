@@ -114,7 +114,7 @@ static func describe_slot(info: SaveGame.SlotInfo) -> String:
 		"People %d/%d   Jobs %d/%d   Buildings %d" % [
 			info.population, info.housing, info.filled_jobs, info.total_jobs, info.buildings,
 		],
-		"Game time %s" % format_game_time(info.game_seconds),
+		"Fighters %d   Game time %s" % [info.fighters, format_game_time(info.game_seconds)],
 	])
 
 
