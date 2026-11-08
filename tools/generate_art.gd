@@ -119,6 +119,8 @@ func _init() -> void:
 	_save_roads()
 	_save_bridges()
 	_save_villagers()
+	_save_hero()
+	_save_hero_shots()
 	_save_cursor()
 	_save_icons()
 	_save_idle_mark()
@@ -814,6 +816,161 @@ func _save_villagers() -> void:
 				var at := Vector2i((direction * 2 + step) * 12, row * 16)
 				image.blit_rect(frame, Rect2i(0, 0, 12, 16), at)
 	image.save_png("res://assets/tiles/villagers.png")
+
+
+# --- Hero ---
+
+const HERO_W := 16
+const HERO_H := 20
+## Where a villager-sized figure sits in a hero frame, leaving room for weapons.
+const HERO_X := 2
+const HERO_Y := 4
+const HERO_SHOT := 12
+## Skin, hair, cape, dark cape. In the order of Hero.LOOKS.
+var _hero_looks: Array[Array] = [
+	[SKIN, Color8(216, 72, 32), ROOF_MID, ROOF_DARK],
+	[Color8(136, 88, 56), Color8(48, 40, 56), GOLD, WHEAT_DARK],
+	[Color8(224, 168, 120), Color8(216, 224, 240), Color8(40, 152, 152), Color8(24, 104, 112)],
+]
+
+
+func _hero_torso(image: Image, direction: int, armor: int, skin: Color) -> void:
+	var x := HERO_X + 2
+	var y := HERO_Y + 8
+	match armor:
+		0: # Leather: a laced vest over bare arms.
+			_rect(image, x, y, 8, 5, WOOD_MID)
+			_rect(image, x, y + 3, 8, 1, WOOD_DARK)
+			if direction == 0:
+				_rect(image, x + 3, y, 2, 3, WOOD_END)
+		1: # Chainmail: checkered rings and matching sleeves.
+			_rect(image, x, y, 8, 5, STONE_MID)
+			for ring_y in range(y, y + 5):
+				for ring_x in range(x + (ring_y % 2), x + 8, 2):
+					_dot(image, ring_x, ring_y, STONE_LIGHT)
+			_rect(image, x, y + 4, 8, 1, WOOD_DARK)
+		2: # Dragonscale: red scales, a golden chest and big shoulders.
+			_rect(image, x, y, 8, 5, D_DARK)
+			for scale_y in range(y, y + 5):
+				for scale_x in range(x + (scale_y % 2), x + 8, 2):
+					_dot(image, scale_x, scale_y, D_MID)
+			if direction == 0:
+				_rect(image, x + 2, y + 1, 4, 2, D_BELLY)
+	var arm: Color = [skin, STONE_MID, D_DARK][armor]
+	if direction != 2:
+		_rect(image, x - 1, y, 1, 3, arm)
+		_rect(image, x + 8, y, 1, 3, arm)
+	if armor == 2:
+		_rect(image, x - 1, y - 1, 3, 2, D_LIGHT)
+		_rect(image, x + 6, y - 1, 3, 2, D_LIGHT)
+
+
+func _hero_head(image: Image, direction: int, look: int) -> void:
+	var details: Array = _hero_looks[look]
+	var hair: Color = details[1]
+	var x := HERO_X + 2
+	var y := HERO_Y
+	_rect(image, x, y + 2, 8, 6, details[0])
+	_rect(image, x + 1, y + 1, 6, 1, hair)
+	_rect(image, x, y + 2, 8, 2, hair)
+	if direction == 0:
+		_dot(image, x + 2, y + 5, INK)
+		_dot(image, x + 5, y + 5, INK)
+	elif direction == 1:
+		_rect(image, x, y + 2, 8, 5, hair)
+	else:
+		_rect(image, x, y + 2, 3, 5, hair)
+		_dot(image, x + 6, y + 5, INK)
+	match look:
+		0: # Ember: spiky.
+			_dot(image, x + 1, y, hair)
+			_dot(image, x + 4, y, hair)
+			_dot(image, x + 6, y, hair)
+		1: # Raven: topknot and a gold band.
+			_rect(image, x + 3, y - 1, 2, 2, hair)
+			_rect(image, x, y + 3, 8, 1, GOLD)
+		2: # Frost: long hair.
+			_rect(image, x, y + 3, 1, 7, hair)
+			if direction != 2:
+				_rect(image, x + 7, y + 3, 1, 7, hair)
+
+
+func _hero_weapon(image: Image, direction: int, weapon: int) -> void:
+	# Carried on the right, except from behind, where that hand is on the left.
+	var x := 1 if direction == 1 else 13
+	match weapon:
+		0: # Longsword.
+			_rect(image, x, 2, 2, 11, STONE_LIGHT)
+			_rect(image, x + 1, 2, 1, 11, WHITE)
+			_rect(image, x - 1, 13, 4, 1, GOLD)
+			_rect(image, x, 14, 2, 2, WOOD_DARK)
+		1: # Longbow.
+			_rect(image, x, 3, 1, 14, W_FOAM)
+			for bow_y in range(3, 17):
+				var bend := roundi(sin((bow_y - 3) / 13.0 * PI) * 2.0)
+				_dot(image, x + (bend if direction != 1 else -bend), bow_y, WOOD_LIGHT)
+		2: # Battle axe.
+			_rect(image, x, 2, 1, 15, WOOD_MID)
+			_rect(image, x - 2, 3, 5, 4, STONE_MID)
+			_rect(image, x - 2, 3, 1, 4, STONE_LIGHT)
+			_rect(image, x + 2, 3, 1, 4, STONE_LIGHT)
+
+
+## Draws one frame. Direction: 0 down, 1 up, 2 side. Step: 0 or 1.
+func _hero_frame(direction: int, step: int, armor: int, weapon: int, look: int) -> Image:
+	var image := _new_image(HERO_W, HERO_H)
+	var details: Array = _hero_looks[look]
+	# The cape hangs behind everything else.
+	_rect(image, HERO_X + 1, HERO_Y + 8, 10, 7, details[3])
+	var boots: Color = [WOOD_DARK, STONE_DARK, D_DARK][armor]
+	var legs_y := HERO_Y + 12
+	if direction == 2:
+		_rect(image, HERO_X, HERO_Y + 8, 2, 7, details[3])
+		_rect(image, HERO_X + 3 + step * 2, legs_y, 2, 3, boots)
+		_rect(image, HERO_X + 7 - step * 2, legs_y, 2, 3, boots)
+	else:
+		_rect(image, HERO_X + 3, legs_y, 2, 3 - step, boots)
+		_rect(image, HERO_X + 7, legs_y, 2, 2 + step, boots)
+	_hero_torso(image, direction, armor, details[0])
+	_hero_head(image, direction, look)
+	if direction == 1:
+		_rect(image, HERO_X + 2, HERO_Y + 8, 8, 6, details[2])
+	_hero_weapon(image, direction, weapon)
+	_outline(image, 0, HERO_W)
+	return image
+
+
+## One row per combination, in the order of Hero.sprite_row_for().
+func _save_hero() -> void:
+	var image := _new_image(HERO_W * 6, HERO_H * 27)
+	for armor in range(3):
+		for weapon in range(3):
+			for look in range(3):
+				var row := armor * 9 + weapon * 3 + look
+				for direction in range(3):
+					for step in range(2):
+						var frame := _hero_frame(direction, step, armor, weapon, look)
+						var at := Vector2i((direction * 2 + step) * HERO_W, row * HERO_H)
+						image.blit_rect(frame, Rect2i(0, 0, HERO_W, HERO_H), at)
+	image.save_png("res://assets/tiles/hero.png")
+
+
+## Sword slash, arrow pointing right and axe impact, in the order of Hero.WEAPONS.
+func _save_hero_shots() -> void:
+	var image := _new_image(HERO_SHOT * 3, HERO_SHOT)
+	_ellipse(image, 6, 6, 5, 5, W_FOAM)
+	_ellipse(image, 3, 6, 5, 5, Color(0, 0, 0, 0))
+	var arrow := HERO_SHOT
+	_rect(image, arrow + 1, 5, 8, 1, WOOD_END)
+	_rect(image, arrow + 9, 4, 1, 3, STONE_LIGHT)
+	_dot(image, arrow + 10, 5, WHITE)
+	_dot(image, arrow, 4, ROOF_MID)
+	_dot(image, arrow, 6, ROOF_MID)
+	var blow := HERO_SHOT * 2
+	_rect(image, blow + 5, 1, 2, 10, FIRE_YELLOW)
+	_rect(image, blow + 1, 5, 10, 2, FIRE_ORANGE)
+	_rect(image, blow + 4, 4, 4, 4, WHITE)
+	image.save_png("res://assets/tiles/hero_shots.png")
 
 
 func _save_cursor() -> void:

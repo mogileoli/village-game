@@ -59,6 +59,16 @@ func _init() -> void:
 	_test_fighters_rush_to_the_dragon_and_throw_water()
 	_test_dragon_survives_save_and_load()
 	_test_older_saves_get_more_dragons()
+	_test_hero_unlocks_at_50_people_after_a_dragon()
+	_test_only_one_valid_hero()
+	_test_armor_trades_health_for_speed()
+	_test_hero_hunts_and_slays_without_water()
+	_test_hero_holds_the_dragon_without_more_damage()
+	_test_longbow_stays_out_of_the_fire()
+	_test_hero_is_wounded_and_recovers()
+	_test_hero_saves_and_plays_on_identically()
+	_test_older_saves_have_no_hero()
+	_test_rejects_bad_heroes()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -1186,3 +1196,192 @@ func _test_older_saves_get_more_dragons() -> void:
 		villager.erase("training")
 	var old_people := VillageSim.from_save_data(with_villagers)
 	_check(old_people != null and old_people.fighter_count() == 0, "older villagers start untrained")
+
+
+# --- Hero ---
+
+func _hero_ready_village(armor := &"chainmail", weapon := &"longsword", look := &"ember") -> VillageSim:
+	var map := VillageSim.new(40, 40, 1, 1)
+	var placements := {}
+	for y in range(14, 27, 3):
+		for x in range(14, 27, 3):
+			if map.terrain_at(Vector2i(x, y)) == VillageSim.Terrain.GRASS:
+				placements[Vector2i(x, y)] = &"farm"
+	var sim := _settled(placements, VillageSim.HERO_MIN_POPULATION)
+	sim.dragon_visits = 1
+	_check(sim.create_hero("Aria", armor, weapon, look), "hero created")
+	sim.population = 0
+	return sim
+
+
+## Runs to the start of a long fight, so a test can watch the hero at work.
+func _start_long_fight(sim: VillageSim, resolve: int) -> void:
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	sim.dragon_stay = 60
+	sim.dragon_budget = 15
+	sim.dragon_resolve = resolve
+
+
+func _test_hero_unlocks_at_50_people_after_a_dragon() -> void:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.population = 50
+	_check(not sim.can_create_hero(), "no hero before any dragon")
+	sim.dragon_visits = 1
+	sim.dragon_state = VillageSim.DragonState.INBOUND
+	_check(not sim.can_create_hero(), "no hero while the first dragon is still on its way")
+	sim.dragon_state = VillageSim.DragonState.RAMPAGE
+	_check(sim.can_create_hero(), "a hero once a dragon has reached 50 people")
+	sim.dragon_state = VillageSim.DragonState.WAITING
+	_check(sim.can_create_hero(), "a hero after the dragon has gone")
+	sim.population = 49
+	_check(not sim.can_create_hero(), "no hero with 49 people")
+	_check(not sim.create_hero("Aria", &"leather", &"longbow", &"frost"), "creating is refused while locked")
+	_check(sim.hero == null, "and leaves no hero behind")
+
+
+func _test_only_one_valid_hero() -> void:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.population = 50
+	sim.dragon_visits = 1
+	_check(not sim.create_hero("  <>  ", &"leather", &"longbow", &"frost"), "needs a usable name")
+	_check(not sim.create_hero("Aria", &"tin", &"longbow", &"frost"), "needs real armor")
+	_check(not sim.create_hero("Aria", &"leather", &"spoon", &"frost"), "needs a real weapon")
+	_check(not sim.create_hero("Aria", &"leather", &"longbow", &"plain"), "needs a real look")
+	_check(sim.create_hero("  Aria <3 the Very Long Named  ", &"leather", &"longbow", &"frost"), "valid choices work")
+	_check(sim.hero.hero_name == "Aria 3 the Very", "name is cleaned and shortened: %s" % sim.hero.hero_name)
+	_check(not sim.can_create_hero(), "only one hero per village")
+	_check(not sim.create_hero("Bram", &"leather", &"longbow", &"frost"), "a second hero is refused")
+	_check(sim.hero.hero_name.begins_with("Aria"), "the first hero stays")
+	var rows := {}
+	for armor: StringName in Hero.ARMORS:
+		for weapon: StringName in Hero.WEAPONS:
+			for look: StringName in Hero.LOOKS:
+				rows[Hero.sprite_row_for(armor, weapon, look)] = true
+	_check(rows.size() == 27 and rows.has(0) and rows.has(26), "every combination has its own sprite row")
+
+
+func _test_armor_trades_health_for_speed() -> void:
+	var light := Hero.create("A", &"leather", &"longsword", &"ember")
+	var middle := Hero.create("B", &"chainmail", &"longsword", &"ember")
+	var heavy := Hero.create("C", &"dragonscale", &"longsword", &"ember")
+	_check(light.max_health() < middle.max_health() and middle.max_health() < heavy.max_health(), "heavier armor protects more")
+	_check(light.speed_factor() > middle.speed_factor() and middle.speed_factor() > heavy.speed_factor(), "heavier armor is slower")
+	var sim := VillageSim.new(40, 40, 1, 1)
+	light.cell = Vector2i(20, 20)
+	heavy.cell = Vector2i(20, 20)
+	_check(sim.walk_speed(light) > sim.walk_speed(heavy), "armor changes walking pace")
+	_check(heavy.speed_factor() >= 1.0, "even the heaviest armor keeps pace with villagers")
+
+
+func _test_hero_hunts_and_slays_without_water() -> void:
+	var sim := _hero_ready_village()
+	var hits := [0]
+	sim.hero_attacked.connect(func(_cell: Vector2i) -> void: hits[0] += 1)
+	var results := {"driven_off": false}
+	sim.dragon_left.connect(func(driven_off: bool, _destroyed: int) -> void: results.driven_off = driven_off)
+	_start_long_fight(sim, 60)
+	var water := sim.water
+	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
+	_check(sim.dragon_state == VillageSim.DragonState.DEPARTING and results.driven_off, "the hero brought the dragon down")
+	_check(hits[0] == 6, "a longsword takes 6 hits to wear down 60 resolve: %d" % hits[0])
+	_check(sim.dragon_slain and sim.hero.dragons_slain == 1, "the dragon counts as slain")
+	_check(sim.water == water, "the hero doesn't use water")
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	_check(not sim.dragon_slain, "the next dragon starts out alive")
+
+
+func _test_hero_holds_the_dragon_without_more_damage() -> void:
+	var sim := _hero_ready_village()
+	var before := sim.building_count()
+	_run_dragon(sim, VillageSim.DragonState.INBOUND)
+	sim.dragon_budget = 1
+	sim.dragon_stay = 20
+	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
+	_check(sim.dragon_slain, "the dragon stays to be slain even after its one building")
+	_check(before - sim.building_count() == 1, "and burns no more than its limit: %d" % (before - sim.building_count()))
+
+
+func _test_longbow_stays_out_of_the_fire() -> void:
+	var sim := _hero_ready_village(&"leather", &"longbow")
+	_start_long_fight(sim, 100000)
+	var shots := [0]
+	sim.hero_attacked.connect(func(cell: Vector2i) -> void:
+		shots[0] += 1
+		_check(Vector2(cell).distance_to(Vector2(sim.dragon_target)) <= 7.0, "arrows stay in range"))
+	for i in range(30):
+		sim.tick()
+	_check(shots[0] > 15, "the archer keeps shooting: %d" % shots[0])
+	_check(sim.hero.health == sim.hero.max_health(), "and is never burned: %d" % sim.hero.health)
+
+
+func _test_hero_is_wounded_and_recovers() -> void:
+	var sim := _hero_ready_village(&"leather", &"battle_axe")
+	var wounded := [0]
+	sim.hero_wounded.connect(func() -> void: wounded[0] += 1)
+	var results := {"driven_off": false}
+	sim.dragon_left.connect(func(driven_off: bool, _destroyed: int) -> void: results.driven_off = driven_off)
+	_start_long_fight(sim, 100000)
+	for i in range(40):
+		sim.tick()
+		if sim.hero.wounded:
+			break
+	_check(wounded[0] == 1 and sim.hero.wounded and sim.hero.health == 0, "dragon fire wounds a hero who stays close")
+	var hits := [0]
+	sim.hero_attacked.connect(func(_cell: Vector2i) -> void: hits[0] += 1)
+	for i in range(8):
+		sim.tick()
+	_check(hits[0] == 0, "a wounded hero stops fighting")
+	_check(Vector2(sim.hero.cell).distance_to(Vector2(sim.dragon_target)) > VillageSim.DRAGON_FIRE_REACH, "and gets clear of the fire")
+	sim.dragon_resolve = 0
+	_run_dragon(sim, VillageSim.DragonState.WAITING)
+	_check(results.driven_off and not sim.dragon_slain, "a dragon others drive off isn't the wounded hero's kill")
+	for i in range(sim.hero.max_health() / VillageSim.HERO_RECOVERY + 1):
+		sim.tick()
+	_check(not sim.hero.wounded and sim.hero.health == sim.hero.max_health(), "the hero heals between dragons")
+
+
+func _test_hero_saves_and_plays_on_identically() -> void:
+	var sim := _hero_ready_village(&"dragonscale", &"battle_axe", &"raven")
+	_start_long_fight(sim, 100000)
+	for i in range(3):
+		sim.tick()
+	sim.hero.dragons_slain = 4
+	var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(sim.to_save_data())))
+	_check(loaded != null and loaded.hero != null, "hero survives save and load")
+	if loaded == null or loaded.hero == null:
+		return
+	_check(loaded.hero.hero_name == "Aria" and loaded.hero.armor == &"dragonscale", "name and armor are kept")
+	_check(loaded.hero.weapon == &"battle_axe" and loaded.hero.look == &"raven", "weapon and look are kept")
+	_check(loaded.hero.dragons_slain == 4, "the tally is kept")
+	for i in range(12):
+		sim.tick()
+		loaded.tick()
+		_check(sim.hero.cell == loaded.hero.cell and sim.hero.health == loaded.hero.health, "loaded hero matches on tick %d" % i)
+	_check(sim.dragon_resolve == loaded.dragon_resolve, "and the fight goes the same way")
+
+
+func _test_older_saves_have_no_hero() -> void:
+	var data := _village(20).to_save_data()
+	data.version = 7
+	for key: String in ["hero", "dragon_hero_fought", "dragon_slain"]:
+		data.erase(key)
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null and loaded.hero == null, "a save from before heroes loads without one")
+
+
+func _test_rejects_bad_heroes() -> void:
+	var sim := _hero_ready_village()
+	var data := sim.to_save_data()
+	for change: Array in [
+		["armor", "tin"], ["weapon", 7], ["look", ""], ["name", ""], ["name", "<<<"], ["health", -1],
+		["health", 9999], ["wounded", "no"], ["dragons_slain", -2], ["cell", [-1, -1]], ["state", Villager.State.WORKING],
+	]:
+		var bad := data.duplicate(true)
+		bad.hero[change[0]] = change[1]
+		_check(VillageSim.from_save_data(bad) == null, "rejects a hero with bad %s: %s" % [change[0], change[1]])
+	var not_a_hero := data.duplicate(true)
+	not_a_hero.hero = 12
+	_check(VillageSim.from_save_data(not_a_hero) == null, "rejects a hero that isn't one")
+	var missing := data.duplicate(true)
+	missing.erase("dragon_slain")
+	_check(VillageSim.from_save_data(missing) == null, "rejects a save missing the slain flag")

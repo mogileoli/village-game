@@ -22,6 +22,11 @@ var layout_version := 0
 var training := 0
 
 
+## Multiplies walking pace.
+func speed_factor() -> float:
+	return 1.0
+
+
 func trip_end() -> float:
 	return path.size() - 1 + (0.5 if to_building != NO_CELL else 0.0)
 

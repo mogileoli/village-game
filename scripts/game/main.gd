@@ -12,6 +12,7 @@ var _tick_timer := 0.0
 var _speed_before_pause := 1
 var _last_painted_cell := Vector2i.ZERO
 var _menu_open := false
+var _hero_could_be_created := false
 
 @onready var _map: MapView = $Map
 @onready var _dragon: DragonView = $Map/Dragon
@@ -27,6 +28,8 @@ func _ready() -> void:
 	_hud.save_requested.connect(_save_game)
 	_hud.load_requested.connect(_load_game)
 	_hud.menu_toggled.connect(_on_menu_toggled)
+	_hud.hero_created.connect(_create_hero)
+	_hud.hero_focus_requested.connect(_focus_on_hero)
 	SaveGame.move_old_save_to_slot()
 	_hud.set_can_load(SaveGame.any_slot_used())
 	_start_sim(VillageSim.new())
@@ -38,6 +41,8 @@ func _start_sim(new_sim: VillageSim) -> void:
 	sim.dragon_incoming.connect(_on_dragon_incoming)
 	sim.dragon_struck.connect(_on_dragon_struck)
 	sim.dragon_left.connect(_on_dragon_left)
+	sim.hero_wounded.connect(_on_hero_wounded)
+	_hero_could_be_created = sim.can_create_hero()
 	_map.bind(sim)
 	_dragon.bind(sim, _map)
 	_villagers.bind(sim, _map)
@@ -130,7 +135,9 @@ func _on_dragon_left(driven_off: bool, destroyed: int) -> void:
 		losses = " 1 building lost."
 	elif destroyed > 1:
 		losses = " %d buildings lost." % destroyed
-	if driven_off:
+	if sim.dragon_slain:
+		_hud.show_banner("%s slew the dragon!%s" % [sim.hero.hero_name, losses])
+	elif driven_off:
 		_hud.show_banner("You drove off the dragon!" + losses)
 	elif destroyed == 0:
 		_hud.show_banner("The dragon flew away")
@@ -205,3 +212,21 @@ func _set_speed(value: int) -> void:
 
 func _refresh_stats() -> void:
 	_hud.show_stats(sim, speed)
+	var can_create := sim.can_create_hero()
+	if can_create and not _hero_could_be_created:
+		_hud.show_banner("Your village can now call a Hero!")
+	_hero_could_be_created = can_create
+
+
+func _create_hero(hero_name: String, armor: StringName, weapon: StringName, look: StringName) -> void:
+	if sim.create_hero(hero_name, armor, weapon, look):
+		_hud.show_banner("%s has come to hunt dragons!" % sim.hero.hero_name)
+		_focus_on_hero()
+
+
+func _focus_on_hero() -> void:
+	_camera.focus_on(_map.cell_center(sim.hero.cell))
+
+
+func _on_hero_wounded() -> void:
+	_hud.show_banner("%s was wounded and fell back!" % sim.hero.hero_name)

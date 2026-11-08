@@ -10,6 +10,8 @@ signal dragon_struck(destroyed: Array[Vector2i], burned: Array[Vector2i])
 ## Towers and trained villagers threw water at the dragon from these cells.
 signal dragon_hit(attackers: Array[Vector2i], damage: int)
 signal dragon_left(driven_off: bool, destroyed: int)
+signal hero_attacked(from_cell: Vector2i)
+signal hero_wounded
 
 enum Terrain { GRASS, WATER, FOREST }
 ## GONE only appears in saves from when there was one dragon per game.
@@ -41,9 +43,10 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 7
+const SAVE_VERSION := 8
 ## The first save version that can have roads on water, which are bridges.
 const FIRST_BRIDGE_VERSION := 7
+const FIRST_HERO_VERSION := 8
 const ROAD_COST := 1
 const BRIDGE_COST := 5
 ## Wood gained from each forest cell cleared.
@@ -79,16 +82,25 @@ const LEVEL_2_MIN_BUILDINGS := 25
 ## caution steer what it attacks (see dragon_interest).
 const DRAGON_LEVELS := {
 	1: {
-		"resolve": 60, "stay": Vector2i(10, 13), "buildings_per_extra_tick": 10, "max_extra_stay": 6,
+		"resolve": 60, "hero_damage": 25, "stay": Vector2i(10, 13), "buildings_per_extra_tick": 10, "max_extra_stay": 6,
 		"damage": Vector2(0.03, 0.099), "burn_radius": Vector2i(0, 1), "caution": 2.0,
 		"appetite": {&"farm": 3.0, &"house": 2.0, &"lumber_camp": 1.5, &"well": 1.0, &"training_center": 1.0, &"tower": 0.0},
 	},
 	2: {
-		"resolve": 150, "stay": Vector2i(16, 20), "buildings_per_extra_tick": 8, "max_extra_stay": 10,
+		"resolve": 150, "hero_damage": 40, "stay": Vector2i(16, 20), "buildings_per_extra_tick": 8, "max_extra_stay": 10,
 		"damage": Vector2(0.10, 0.199), "burn_radius": Vector2i(1, 1), "caution": 0.5,
 		"appetite": {&"training_center": 4.0, &"tower": 3.5, &"house": 2.5, &"farm": 2.0, &"well": 2.0, &"lumber_camp": 1.5},
 	},
 }
+## A hero this close to where a dragon strikes gets burned.
+const DRAGON_FIRE_REACH := 3.0
+const HERO_MIN_POPULATION := 50
+const HERO_PATROL_PAUSE := Vector2i(3, 8)
+## Health regained each tick when no dragon is visiting.
+const HERO_RECOVERY := 4
+## How far a wounded hero runs from the dragon.
+const HERO_RETREAT_CELLS := 9.0
+const HERO_SALT := 5000
 const DRAGON_CLUSTER_DISTANCE := 2
 const DRAGON_CLUSTER_BONUS := 0.25
 const FIGHTER_CAUTION_SHARE := 0.25
@@ -119,6 +131,10 @@ var dragon_destroyed := 0
 var dragon_rampage_ticks := 0
 var dragon_previous_target := Vector2i.ZERO
 var villagers: Array[Villager] = []
+var hero: Hero = null
+## Whether the hero landed a blow on this visit's dragon.
+var dragon_hero_fought := false
+var dragon_slain := false
 
 var _terrain := PackedByteArray()
 var _buildings: Dictionary[Vector2i, StringName] = {}
@@ -176,7 +192,7 @@ func is_walkable(cell: Vector2i) -> bool:
 
 
 func walk_speed(villager: Villager) -> float:
-	return ROAD_WALK_SPEED if has_road(villager.cell) else GRASS_WALK_SPEED
+	return (ROAD_WALK_SPEED if has_road(villager.cell) else GRASS_WALK_SPEED) * villager.speed_factor()
 
 
 func workers_at(cell: Vector2i) -> int:
@@ -339,6 +355,7 @@ func tick() -> void:
 				population -= 1
 		elif population < housing():
 			population += 1
+	_advance_hero()
 	_advance_dragon()
 	stats_changed.emit()
 
@@ -350,7 +367,7 @@ func to_save_data() -> Dictionary:
 	_match_villagers_to_population()
 	_update_jobs()
 	# A path crossing something just built or removed wouldn't load back.
-	for villager in villagers:
+	for villager in _everyone():
 		if villager.state == Villager.State.WALKING and villager.layout_version != _layout_version:
 			_reroute(villager)
 	var saved_villagers: Array[Dictionary] = []
@@ -390,6 +407,9 @@ func to_save_data() -> Dictionary:
 		"dragon_rampage_ticks": dragon_rampage_ticks,
 		"dragon_previous_x": dragon_previous_target.x,
 		"dragon_previous_y": dragon_previous_target.y,
+		"dragon_hero_fought": dragon_hero_fought,
+		"dragon_slain": dragon_slain,
+		"hero": hero.to_data() if hero != null else null,
 	}
 
 
@@ -443,6 +463,8 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 	# Saves from before villagers were simulated get new ones from the population.
 	if version >= 4 and not sim._load_villagers(data, version):
 		return null
+	if version >= FIRST_HERO_VERSION and not sim._load_hero(data, version):
+		return null
 	if version < 5:
 		sim.water = sim.population * OLD_SAVE_WATER_TICKS / MEAL_INTERVAL
 	return sim
@@ -459,10 +481,10 @@ func _load_villagers(data: Dictionary, version: int) -> bool:
 	return true
 
 
-func _read_villager(entry: Variant, version: int) -> Villager:
+func _read_villager(entry: Variant, version: int, into: Villager = null) -> Villager:
 	if not entry is Dictionary or not entry.get("path") is Array:
 		return null
-	var villager := Villager.new()
+	var villager := into if into != null else Villager.new()
 	villager.home = _read_cell(entry.get("home"))
 	villager.job = _read_cell(entry.get("job"))
 	villager.cell = _read_cell(entry.get("cell"))
@@ -678,6 +700,8 @@ func _plan_visit() -> void:
 	dragon_budget = maxi(floori(_buildings.size() * rng.randf_range(damage.x, damage.y)), 1)
 	dragon_destroyed = 0
 	dragon_rampage_ticks = 0
+	dragon_hero_fought = false
+	dragon_slain = false
 
 
 func _choose_dragon_target(salt: int) -> Vector2i:
@@ -697,13 +721,16 @@ func _choose_dragon_target(salt: int) -> Vector2i:
 func _dragon_rampage_tick() -> void:
 	dragon_rampage_ticks += 1
 	_defenders_attack()
+	_hero_attack()
 	if dragon_resolve <= 0:
 		_dragon_leave(true)
 		return
 	if dragon_last_strike_tick() == dragon_rampage_ticks:
 		_dragon_strike()
+	# A hero's challenge holds the dragon for its whole stay. It can't burn more for it.
+	var challenged := hero != null and not hero.wounded
 	if dragon_state == DragonState.RAMPAGE and (
-		dragon_rampage_ticks >= dragon_stay or dragon_destroyed >= dragon_budget
+		dragon_rampage_ticks >= dragon_stay or (dragon_destroyed >= dragon_budget and not challenged)
 	):
 		_dragon_leave(false)
 
@@ -729,6 +756,7 @@ func _dragon_strike() -> void:
 		var radius: Vector2i = DRAGON_LEVELS[dragon_level].burn_radius
 		burned = _burn_around(destroyed, _visit_rng(dragon_rampage_ticks).randi_range(radius.x, radius.y))
 		dragon_destroyed += destroyed.size()
+	_burn_hero()
 	dragon_struck.emit(destroyed, burned)
 	if not _buildings.is_empty():
 		dragon_previous_target = dragon_target
@@ -737,6 +765,9 @@ func _dragon_strike() -> void:
 
 
 func _dragon_leave(driven_off: bool) -> void:
+	dragon_slain = driven_off and dragon_hero_fought and not hero.wounded if hero != null else false
+	if dragon_slain:
+		hero.dragons_slain += 1
 	dragon_state = DragonState.DEPARTING
 	dragon_timer = DRAGON_DEPARTING_TICKS
 	dragon_left.emit(driven_off, dragon_destroyed)
@@ -845,6 +876,153 @@ func _sorted_buildings(matches: Callable) -> Array[Vector2i]:
 	return cells
 
 
+# --- Hero ---
+
+## A dragon that reached the village counts, even if it was driven off before it burned anything.
+func dragon_has_attacked() -> bool:
+	return dragon_visits > 1 or (dragon_visits == 1 and dragon_state != DragonState.INBOUND)
+
+
+func can_create_hero() -> bool:
+	return hero == null and population >= HERO_MIN_POPULATION and dragon_has_attacked()
+
+
+func create_hero(hero_name: String, armor: StringName, weapon: StringName, look: StringName) -> bool:
+	if not can_create_hero():
+		return false
+	var new_hero := Hero.create(hero_name, armor, weapon, look)
+	if new_hero == null:
+		return false
+	new_hero.cell = _nearest_walkable(Vector2i(width, height) / 2)
+	new_hero.state = Villager.State.OUTSIDE
+	new_hero.timer = 1
+	new_hero.layout_version = _layout_version
+	hero = new_hero
+	stats_changed.emit()
+	return true
+
+
+func _everyone() -> Array[Villager]:
+	var all := villagers.duplicate()
+	if hero != null:
+		all.append(hero)
+	return all
+
+
+func _advance_hero() -> void:
+	if hero == null:
+		return
+	if not is_walkable(hero.cell):
+		hero.cell = _nearest_walkable(hero.cell)
+	var visiting := dragon_is_visiting()
+	if visiting and not hero.wounded:
+		_hero_hunt()
+	if hero.state == Villager.State.WALKING:
+		_walk(hero, HERO_SALT)
+	elif not visiting:
+		_hero_patrol()
+	if not visiting:
+		hero.health = mini(hero.health + HERO_RECOVERY, hero.max_health())
+		hero.wounded = hero.wounded and hero.health < hero.max_health()
+
+
+## Heads for a spot to fight from, unless already at one or on the way to one.
+func _hero_hunt() -> void:
+	if hero.state == Villager.State.WALKING:
+		if not hero.path.is_empty() and _hero_good_spot(hero.path[-1]):
+			return
+	elif _hero_good_spot(hero.cell):
+		return
+	var goal := _hero_fighting_spot()
+	if goal != hero.cell:
+		_route(hero, Villager.NO_CELL, Villager.NO_CELL, goal)
+
+
+func _hero_can_reach(cell: Vector2i) -> bool:
+	return Vector2(cell).distance_to(Vector2(dragon_target)) <= hero.reach()
+
+
+func _hero_good_spot(cell: Vector2i) -> bool:
+	var outside_fire := Vector2(cell).distance_to(Vector2(dragon_target)) > DRAGON_FIRE_REACH
+	return _hero_can_reach(cell) and (outside_fire or not hero.keeps_clear())
+
+
+## The closest cell the hero can get to and fight from.
+func _hero_fighting_spot() -> Vector2i:
+	var best := Villager.NO_CELL
+	var region: int = _regions.get(hero.cell, -1)
+	var limit := ceili(hero.reach())
+	for y in range(-limit, limit + 1):
+		for x in range(-limit, limit + 1):
+			var cell := dragon_target + Vector2i(x, y)
+			if not is_walkable(cell) or _regions.get(cell, -1) != region or not _hero_good_spot(cell):
+				continue
+			if best == Villager.NO_CELL or _distance(cell, hero.cell) < _distance(best, hero.cell):
+				best = cell
+	return best if best != Villager.NO_CELL else _nearest_walkable(dragon_target)
+
+
+## Between dragons, the hero walks from building to building.
+func _hero_patrol() -> void:
+	hero.timer -= 1
+	if hero.timer > 0 or _buildings.is_empty():
+		return
+	hero.timer = _roll(HERO_SALT, HERO_PATROL_PAUSE)
+	var cells: Array[Vector2i] = _buildings.keys()
+	cells.sort()
+	var spot := cells[_roll(HERO_SALT + 1, Vector2i(0, cells.size() - 1))]
+	_route(hero, Villager.NO_CELL, Villager.NO_CELL, _nearest_walkable(spot))
+
+
+func _hero_attack() -> void:
+	if hero == null or hero.wounded or not _hero_can_reach(hero.cell):
+		return
+	dragon_resolve = maxi(dragon_resolve - hero.damage(), 0)
+	dragon_hero_fought = true
+	hero_attacked.emit(hero.cell)
+
+
+func _burn_hero() -> void:
+	if hero == null or hero.wounded or Vector2(hero.cell).distance_to(Vector2(dragon_target)) > DRAGON_FIRE_REACH:
+		return
+	hero.health = maxi(hero.health - DRAGON_LEVELS[dragon_level].hero_damage, 0)
+	if hero.health > 0:
+		return
+	hero.wounded = true
+	var away := Vector2(hero.cell - dragon_target).normalized()
+	var retreat := hero.cell + Vector2i((away if away != Vector2.ZERO else Vector2.DOWN) * HERO_RETREAT_CELLS)
+	retreat = retreat.clamp(Vector2i.ZERO, Vector2i(width - 1, height - 1))
+	_route(hero, Villager.NO_CELL, Villager.NO_CELL, _nearest_walkable(retreat))
+	hero_wounded.emit()
+
+
+func _load_hero(data: Dictionary, version: int) -> bool:
+	if not data.get("dragon_hero_fought") is bool or not data.get("dragon_slain") is bool:
+		return false
+	dragon_hero_fought = data.dragon_hero_fought
+	dragon_slain = data.dragon_slain
+	var entry: Variant = data.get("hero")
+	if entry == null:
+		return true
+	if not entry is Dictionary or not entry.get("wounded") is bool:
+		return false
+	for key: String in ["name", "armor", "weapon", "look"]:
+		if not entry.get(key) is String:
+			return false
+	var loaded := Hero.create(entry.name, StringName(entry.armor), StringName(entry.weapon), StringName(entry.look))
+	if loaded == null or loaded.hero_name != entry.name or _read_villager(entry, version, loaded) == null:
+		return false
+	loaded.health = _whole_number(entry, "health")
+	loaded.wounded = entry.wounded
+	loaded.dragons_slain = _whole_number(entry, "dragons_slain")
+	if loaded.health < 0 or loaded.health > loaded.max_health() or loaded.dragons_slain < 0:
+		return false
+	if loaded.cell == Villager.NO_CELL or not loaded.state in [Villager.State.WALKING, Villager.State.OUTSIDE]:
+		return false
+	hero = loaded
+	return true
+
+
 # --- Villagers ---
 
 func _rebuild_grid() -> void:
@@ -871,7 +1049,7 @@ func _layout_changed(cell: Vector2i) -> void:
 
 ## Nobody is left standing in the water when a bridge goes.
 func _move_villagers_off(cell: Vector2i) -> void:
-	for villager in villagers:
+	for villager in _everyone():
 		if villager.cell == cell:
 			villager.cell = _nearest_walkable(cell)
 

@@ -3,6 +3,12 @@ extends Node2D
 ## Draws the simulation's villagers, smoothing their walking between ticks.
 
 const TEXTURE := preload("res://assets/tiles/villagers.png")
+const HERO_TEXTURE := preload("res://assets/tiles/hero.png")
+const HERO_ROWS := 27
+const HERO_WOUNDED_TINT := Color(1.0, 0.55, 0.55)
+const HERO_NAME_COLOR := Color(0.97, 0.82, 0.28)
+const HERO_NAME_WIDTH := 96.0
+const HERO_NAME_RISE := 32.0
 const LOOKS := 4
 ## The sprite sheet row worn by trained fighters.
 const FIGHTER_LOOK := 4
@@ -17,6 +23,24 @@ var _sim: VillageSim
 var _map: MapView
 var _sprites: Array[Sprite2D] = []
 var _time := 0.0
+var _hero_sprite: Sprite2D
+var _hero_name: Label
+
+
+func _ready() -> void:
+	_hero_sprite = Sprite2D.new()
+	_hero_sprite.texture = HERO_TEXTURE
+	_hero_sprite.hframes = 6
+	_hero_sprite.vframes = HERO_ROWS
+	_hero_sprite.offset = Vector2(0, -9)
+	_hero_sprite.visible = false
+	add_child(_hero_sprite)
+	_hero_name = Label.new()
+	_hero_name.size = Vector2(HERO_NAME_WIDTH, 0)
+	_hero_name.position = Vector2(-HERO_NAME_WIDTH / 2.0, -HERO_NAME_RISE)
+	_hero_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hero_name.add_theme_color_override("font_color", HERO_NAME_COLOR)
+	_hero_sprite.add_child(_hero_name)
 
 
 func bind(sim: VillageSim, map: MapView) -> void:
@@ -36,6 +60,7 @@ func advance(sim_delta: float, tick_fraction: float) -> void:
 		_sprites.pop_back().queue_free()
 	for index in range(villagers.size()):
 		_draw_villager(villagers[index], _sprites[index], index, tick_fraction)
+	_draw_hero(tick_fraction)
 
 
 func _add_sprite() -> void:
@@ -66,6 +91,25 @@ func _draw_villager(villager: Villager, sprite: Sprite2D, index: int, tick_fract
 	sprite.position = position_now
 	if moved.length_squared() > 0.0:
 		_face(sprite, moved)
+
+
+func _draw_hero(tick_fraction: float) -> void:
+	var hero := _sim.hero
+	_hero_sprite.visible = hero != null
+	if hero == null:
+		return
+	_hero_sprite.frame_coords.y = hero.sprite_row()
+	_hero_sprite.modulate = HERO_WOUNDED_TINT if hero.wounded else Color.WHITE
+	_hero_name.text = hero.hero_name
+	if hero.state != Villager.State.WALKING:
+		_hero_sprite.position = _map.cell_center(hero.cell)
+		_hero_sprite.frame_coords.x = FRAME_DOWN
+		return
+	var position_now := _walking_position(hero, Vector2.ZERO, tick_fraction)
+	var moved := position_now - _hero_sprite.position
+	_hero_sprite.position = position_now
+	if moved.length_squared() > 0.0:
+		_face(_hero_sprite, moved)
 
 
 ## Keeps people from walking in single file. Stable for each person.

@@ -6,6 +6,10 @@ extends Node2D
 
 const FIRE_TEXTURE := preload("res://assets/tiles/fire.png")
 const SPLASH_TEXTURE := preload("res://assets/tiles/splash.png")
+const HERO_SHOTS_TEXTURE := preload("res://assets/tiles/hero_shots.png")
+const HERO_SHOT_FRAMES := 3
+## How far a slain dragon tilts as it falls, in radians.
+const FALL_TILT := 0.6
 const FIRE_FRAMES := 3
 const ENTRY_OFFSET := Vector2(-420, -120)
 const EXIT_OFFSET := Vector2(420, -120)
@@ -42,6 +46,7 @@ func bind(sim: VillageSim, map: MapView) -> void:
 	_map = map
 	_sim.dragon_struck.connect(_on_struck)
 	_sim.dragon_hit.connect(_on_hit)
+	_sim.hero_attacked.connect(_on_hero_attacked)
 	for list: Array[Dictionary] in [_fires, _drops]:
 		for item in list:
 			item.sprite.queue_free()
@@ -66,7 +71,14 @@ func advance(sim_delta: float, tick_fraction: float) -> void:
 	var ground := _ground_position(state, tick_fraction)
 	var moved := ground - _shadow.position
 	_shadow.position = ground
-	_body.position = ground + Vector2(0, -ALTITUDE)
+	# A slain dragon drops out of the sky and fades away instead of flying off.
+	var fallen := 0.0
+	if state == VillageSim.DragonState.DEPARTING and _sim.dragon_slain:
+		fallen = 1.0 - clampf((_sim.dragon_timer - tick_fraction) / VillageSim.DRAGON_DEPARTING_TICKS, 0.0, 1.0)
+	_body.position = ground + Vector2(0, -ALTITUDE * (1.0 - fallen))
+	_body.rotation = fallen * FALL_TILT
+	_body.modulate.a = 1.0 - fallen * fallen
+	_shadow.modulate.a = _body.modulate.a
 	if absf(moved.x) > 0.01:
 		_body.flip_h = moved.x < 0.0
 		_shadow.flip_h = _body.flip_h
@@ -100,6 +112,8 @@ func _ground_position(state: VillageSim.DragonState, tick_fraction: float) -> Ve
 		_was_departing = true
 		_departure_start = _shadow.position if _shadow.visible else target
 	var gone := 1.0 - (_sim.dragon_timer - tick_fraction) / VillageSim.DRAGON_DEPARTING_TICKS
+	if _sim.dragon_slain:
+		return _departure_start
 	return _departure_start + EXIT_OFFSET * clampf(gone, 0.0, 1.0)
 
 
@@ -139,6 +153,17 @@ func _on_hit(attackers: Array[Vector2i], _damage: int) -> void:
 			})
 
 
+## The hero's slash, arrow or axe blow, flying up to the dragon.
+func _on_hero_attacked(from_cell: Vector2i) -> void:
+	var shot := Sprite2D.new()
+	shot.texture = HERO_SHOTS_TEXTURE
+	shot.hframes = HERO_SHOT_FRAMES
+	shot.frame = _sim.hero.weapon_index()
+	shot.visible = false
+	add_child(shot)
+	_drops.append({"sprite": shot, "from": _map.cell_center(from_cell) + VILLAGER_HANDS, "age": 0.0, "aimed": true})
+
+
 func _update_drops(sim_delta: float) -> void:
 	for drop: Dictionary in _drops.duplicate():
 		drop.age += sim_delta
@@ -151,6 +176,8 @@ func _update_drops(sim_delta: float) -> void:
 		elif t >= 0.0:
 			var from: Vector2 = drop.from
 			sprite.position = from.lerp(_body.position, t) + Vector2(0, -sin(t * PI) * DROP_ARC)
+			if drop.get("aimed", false):
+				sprite.rotation = from.angle_to_point(_body.position)
 
 
 func _update_fires(sim_delta: float) -> void:
