@@ -60,7 +60,9 @@ func _init() -> void:
 	_test_dragon_survives_save_and_load()
 	_test_older_saves_get_more_dragons()
 	_test_hero_unlocks_at_50_people_after_a_dragon()
-	_test_only_one_valid_hero()
+	_test_hero_choices_must_be_valid()
+	_test_one_hero_per_ten_villagers()
+	_test_heroes_fight_together()
 	_test_armor_trades_health_for_speed()
 	_test_hero_hunts_and_slays_without_water()
 	_test_hero_holds_the_dragon_without_more_damage()
@@ -68,6 +70,7 @@ func _init() -> void:
 	_test_hero_is_wounded_and_recovers()
 	_test_hero_saves_and_plays_on_identically()
 	_test_older_saves_have_no_hero()
+	_test_single_hero_saves_still_load()
 	_test_rejects_bad_heroes()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
@@ -1236,10 +1239,10 @@ func _test_hero_unlocks_at_50_people_after_a_dragon() -> void:
 	sim.population = 49
 	_check(not sim.can_create_hero(), "no hero with 49 people")
 	_check(not sim.create_hero("Aria", &"leather", &"longbow", &"frost"), "creating is refused while locked")
-	_check(sim.hero == null, "and leaves no hero behind")
+	_check(sim.heroes.is_empty(), "and leaves no hero behind")
 
 
-func _test_only_one_valid_hero() -> void:
+func _test_hero_choices_must_be_valid() -> void:
 	var sim := VillageSim.new(40, 40, 1, 1)
 	sim.population = 50
 	sim.dragon_visits = 1
@@ -1247,17 +1250,56 @@ func _test_only_one_valid_hero() -> void:
 	_check(not sim.create_hero("Aria", &"tin", &"longbow", &"frost"), "needs real armor")
 	_check(not sim.create_hero("Aria", &"leather", &"spoon", &"frost"), "needs a real weapon")
 	_check(not sim.create_hero("Aria", &"leather", &"longbow", &"plain"), "needs a real look")
+	_check(sim.heroes.is_empty(), "bad choices leave no hero behind")
 	_check(sim.create_hero("  Aria <3 the Very Long Named  ", &"leather", &"longbow", &"frost"), "valid choices work")
-	_check(sim.hero.hero_name == "Aria 3 the Very", "name is cleaned and shortened: %s" % sim.hero.hero_name)
-	_check(not sim.can_create_hero(), "only one hero per village")
-	_check(not sim.create_hero("Bram", &"leather", &"longbow", &"frost"), "a second hero is refused")
-	_check(sim.hero.hero_name.begins_with("Aria"), "the first hero stays")
+	_check(sim.heroes[0].hero_name == "Aria 3 the Very", "name is cleaned and shortened: %s" % sim.heroes[0].hero_name)
 	var rows := {}
 	for armor: StringName in Hero.ARMORS:
 		for weapon: StringName in Hero.WEAPONS:
 			for look: StringName in Hero.LOOKS:
 				rows[Hero.sprite_row_for(armor, weapon, look)] = true
 	_check(rows.size() == 27 and rows.has(0) and rows.has(26), "every combination has its own sprite row")
+
+
+func _test_one_hero_per_ten_villagers() -> void:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.population = 59
+	sim.dragon_visits = 1
+	_check(sim.hero_limit() == 5, "59 people support 5 heroes")
+	for i in range(5):
+		_check(sim.create_hero("Hero %d" % i, &"leather", &"longbow", &"frost"), "hero %d fits" % i)
+	_check(not sim.can_create_hero(), "the limit is reached")
+	_check(not sim.create_hero("Extra", &"leather", &"longbow", &"frost"), "a sixth hero needs 60 people")
+	sim.population = 60
+	_check(sim.create_hero("Sixth", &"leather", &"longbow", &"frost"), "60 people allow a sixth")
+	sim.population = 30
+	_check(sim.heroes.size() == 6, "heroes stay when the village shrinks")
+	sim.population = 49
+	_check(not sim.can_create_hero(), "and none can join under 50 people")
+
+
+func _test_heroes_fight_together() -> void:
+	var sim := _hero_ready_village()
+	sim.population = 50
+	_check(sim.create_hero("Bram", &"leather", &"battle_axe", &"raven"), "second hero created")
+	_check(sim.create_hero("Cato", &"dragonscale", &"longsword", &"frost"), "third hero created")
+	sim.population = 0
+	var attackers := {}
+	sim.hero_attacked.connect(func(hero: Hero) -> void: attackers[hero.hero_name] = true)
+	_start_long_fight(sim, 100000)
+	for i in range(12):
+		sim.tick()
+		var cells := {}
+		for hero in sim.heroes:
+			if hero.state != Villager.State.WALKING:
+				_check(not cells.has(hero.cell), "heroes don't stand on each other at tick %d" % i)
+				cells[hero.cell] = true
+	_check(attackers.size() == 3, "all three heroes attack: %s" % [attackers.keys()])
+	sim.dragon_resolve = 0
+	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
+	_check(sim.dragon_slain and sim.dragon_slayers().size() >= 2, "the heroes share the kill")
+	for hero in sim.dragon_slayers():
+		_check(hero.dragons_slain == 1, "%s's tally goes up" % hero.hero_name)
 
 
 func _test_armor_trades_health_for_speed() -> void:
@@ -1276,7 +1318,7 @@ func _test_armor_trades_health_for_speed() -> void:
 func _test_hero_hunts_and_slays_without_water() -> void:
 	var sim := _hero_ready_village()
 	var hits := [0]
-	sim.hero_attacked.connect(func(_cell: Vector2i) -> void: hits[0] += 1)
+	sim.hero_attacked.connect(func(_hero: Hero) -> void: hits[0] += 1)
 	var results := {"driven_off": false}
 	sim.dragon_left.connect(func(driven_off: bool, _destroyed: int) -> void: results.driven_off = driven_off)
 	_start_long_fight(sim, 60)
@@ -1284,7 +1326,7 @@ func _test_hero_hunts_and_slays_without_water() -> void:
 	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
 	_check(sim.dragon_state == VillageSim.DragonState.DEPARTING and results.driven_off, "the hero brought the dragon down")
 	_check(hits[0] == 6, "a longsword takes 6 hits to wear down 60 resolve: %d" % hits[0])
-	_check(sim.dragon_slain and sim.hero.dragons_slain == 1, "the dragon counts as slain")
+	_check(sim.dragon_slain and sim.heroes[0].dragons_slain == 1, "the dragon counts as slain")
 	_check(sim.water == water, "the hero doesn't use water")
 	_run_dragon(sim, VillageSim.DragonState.INBOUND)
 	_check(not sim.dragon_slain, "the next dragon starts out alive")
@@ -1305,39 +1347,39 @@ func _test_longbow_stays_out_of_the_fire() -> void:
 	var sim := _hero_ready_village(&"leather", &"longbow")
 	_start_long_fight(sim, 100000)
 	var shots := [0]
-	sim.hero_attacked.connect(func(cell: Vector2i) -> void:
+	sim.hero_attacked.connect(func(hero: Hero) -> void:
 		shots[0] += 1
-		_check(Vector2(cell).distance_to(Vector2(sim.dragon_target)) <= 7.0, "arrows stay in range"))
+		_check(Vector2(hero.cell).distance_to(Vector2(sim.dragon_target)) <= 7.0, "arrows stay in range"))
 	for i in range(30):
 		sim.tick()
 	_check(shots[0] > 15, "the archer keeps shooting: %d" % shots[0])
-	_check(sim.hero.health == sim.hero.max_health(), "and is never burned: %d" % sim.hero.health)
+	_check(sim.heroes[0].health == sim.heroes[0].max_health(), "and is never burned: %d" % sim.heroes[0].health)
 
 
 func _test_hero_is_wounded_and_recovers() -> void:
 	var sim := _hero_ready_village(&"leather", &"battle_axe")
 	var wounded := [0]
-	sim.hero_wounded.connect(func() -> void: wounded[0] += 1)
+	sim.hero_wounded.connect(func(_hero: Hero) -> void: wounded[0] += 1)
 	var results := {"driven_off": false}
 	sim.dragon_left.connect(func(driven_off: bool, _destroyed: int) -> void: results.driven_off = driven_off)
 	_start_long_fight(sim, 100000)
 	for i in range(40):
 		sim.tick()
-		if sim.hero.wounded:
+		if sim.heroes[0].wounded:
 			break
-	_check(wounded[0] == 1 and sim.hero.wounded and sim.hero.health == 0, "dragon fire wounds a hero who stays close")
+	_check(wounded[0] == 1 and sim.heroes[0].wounded and sim.heroes[0].health == 0, "dragon fire wounds a hero who stays close")
 	var hits := [0]
-	sim.hero_attacked.connect(func(_cell: Vector2i) -> void: hits[0] += 1)
+	sim.hero_attacked.connect(func(_hero: Hero) -> void: hits[0] += 1)
 	for i in range(8):
 		sim.tick()
 	_check(hits[0] == 0, "a wounded hero stops fighting")
-	_check(Vector2(sim.hero.cell).distance_to(Vector2(sim.dragon_target)) > VillageSim.DRAGON_FIRE_REACH, "and gets clear of the fire")
+	_check(Vector2(sim.heroes[0].cell).distance_to(Vector2(sim.dragon_target)) > VillageSim.DRAGON_FIRE_REACH, "and gets clear of the fire")
 	sim.dragon_resolve = 0
 	_run_dragon(sim, VillageSim.DragonState.WAITING)
 	_check(results.driven_off and not sim.dragon_slain, "a dragon others drive off isn't the wounded hero's kill")
-	for i in range(sim.hero.max_health() / VillageSim.HERO_RECOVERY + 1):
+	for i in range(sim.heroes[0].max_health() / VillageSim.HERO_RECOVERY + 1):
 		sim.tick()
-	_check(not sim.hero.wounded and sim.hero.health == sim.hero.max_health(), "the hero heals between dragons")
+	_check(not sim.heroes[0].wounded and sim.heroes[0].health == sim.heroes[0].max_health(), "the hero heals between dragons")
 
 
 func _test_hero_saves_and_plays_on_identically() -> void:
@@ -1345,28 +1387,47 @@ func _test_hero_saves_and_plays_on_identically() -> void:
 	_start_long_fight(sim, 100000)
 	for i in range(3):
 		sim.tick()
-	sim.hero.dragons_slain = 4
+	sim.heroes[0].dragons_slain = 4
 	var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(sim.to_save_data())))
-	_check(loaded != null and loaded.hero != null, "hero survives save and load")
-	if loaded == null or loaded.hero == null:
+	_check(loaded != null and loaded.heroes.size() == 1, "hero survives save and load")
+	if loaded == null or loaded.heroes.is_empty():
 		return
-	_check(loaded.hero.hero_name == "Aria" and loaded.hero.armor == &"dragonscale", "name and armor are kept")
-	_check(loaded.hero.weapon == &"battle_axe" and loaded.hero.look == &"raven", "weapon and look are kept")
-	_check(loaded.hero.dragons_slain == 4, "the tally is kept")
+	_check(loaded.heroes[0].hero_name == "Aria" and loaded.heroes[0].armor == &"dragonscale", "name and armor are kept")
+	_check(loaded.heroes[0].weapon == &"battle_axe" and loaded.heroes[0].look == &"raven", "weapon and look are kept")
+	_check(loaded.heroes[0].dragons_slain == 4, "the tally is kept")
 	for i in range(12):
 		sim.tick()
 		loaded.tick()
-		_check(sim.hero.cell == loaded.hero.cell and sim.hero.health == loaded.hero.health, "loaded hero matches on tick %d" % i)
+		_check(sim.heroes[0].cell == loaded.heroes[0].cell and sim.heroes[0].health == loaded.heroes[0].health, "loaded hero matches on tick %d" % i)
 	_check(sim.dragon_resolve == loaded.dragon_resolve, "and the fight goes the same way")
 
 
 func _test_older_saves_have_no_hero() -> void:
 	var data := _village(20).to_save_data()
 	data.version = 7
-	for key: String in ["hero", "dragon_hero_fought", "dragon_slain"]:
+	for key: String in ["heroes", "dragon_slain"]:
 		data.erase(key)
 	var loaded := VillageSim.from_save_data(data)
-	_check(loaded != null and loaded.hero == null, "a save from before heroes loads without one")
+	_check(loaded != null and loaded.heroes.is_empty(), "a save from before heroes loads without one")
+
+
+func _test_single_hero_saves_still_load() -> void:
+	var sim := _hero_ready_village(&"leather", &"longbow", &"frost")
+	var data: Dictionary = sim.to_save_data().duplicate(true)
+	data.version = 8
+	data.hero = data.heroes[0]
+	data.hero.erase("fought")
+	data.dragon_hero_fought = true
+	data.erase("heroes")
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null and loaded.heroes.size() == 1, "a one-hero save keeps its hero")
+	if loaded != null and loaded.heroes.size() == 1:
+		_check(loaded.heroes[0].hero_name == "Aria" and loaded.heroes[0].fought, "with their name and fight")
+	data.hero = null
+	var none := VillageSim.from_save_data(data)
+	_check(none != null and none.heroes.is_empty(), "a version 8 save with no hero loads empty")
+	data.hero = 12
+	_check(VillageSim.from_save_data(data) == null, "a version 8 save with a bad hero is rejected")
 
 
 func _test_rejects_bad_heroes() -> void:
@@ -1374,13 +1435,13 @@ func _test_rejects_bad_heroes() -> void:
 	var data := sim.to_save_data()
 	for change: Array in [
 		["armor", "tin"], ["weapon", 7], ["look", ""], ["name", ""], ["name", "<<<"], ["health", -1],
-		["health", 9999], ["wounded", "no"], ["dragons_slain", -2], ["cell", [-1, -1]], ["state", Villager.State.WORKING],
+		["health", 9999], ["wounded", "no"], ["fought", "no"], ["dragons_slain", -2], ["cell", [-1, -1]], ["state", Villager.State.WORKING],
 	]:
 		var bad := data.duplicate(true)
-		bad.hero[change[0]] = change[1]
+		bad.heroes[0][change[0]] = change[1]
 		_check(VillageSim.from_save_data(bad) == null, "rejects a hero with bad %s: %s" % [change[0], change[1]])
 	var not_a_hero := data.duplicate(true)
-	not_a_hero.hero = 12
+	not_a_hero.heroes = [12]
 	_check(VillageSim.from_save_data(not_a_hero) == null, "rejects a hero that isn't one")
 	var missing := data.duplicate(true)
 	missing.erase("dragon_slain")

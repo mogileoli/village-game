@@ -136,7 +136,9 @@ func _on_dragon_left(driven_off: bool, destroyed: int) -> void:
 	elif destroyed > 1:
 		losses = " %d buildings lost." % destroyed
 	if sim.dragon_slain:
-		_hud.show_banner("%s slew the dragon!%s" % [sim.hero.hero_name, losses])
+		var slayers := sim.dragon_slayers()
+		var victor := slayers[0].hero_name if slayers.size() == 1 else "Your heroes"
+		_hud.show_banner("%s slew the dragon!%s" % [victor, losses])
 	elif driven_off:
 		_hud.show_banner("You drove off the dragon!" + losses)
 	elif destroyed == 0:
@@ -220,13 +222,14 @@ func _refresh_stats() -> void:
 
 func _create_hero(hero_name: String, armor: StringName, weapon: StringName, look: StringName) -> void:
 	if sim.create_hero(hero_name, armor, weapon, look):
-		_hud.show_banner("%s has come to hunt dragons!" % sim.hero.hero_name)
-		_focus_on_hero()
+		var hero: Hero = sim.heroes[-1]
+		_hud.show_banner("%s has come to hunt dragons!" % hero.hero_name)
+		_focus_on_hero(hero)
 
 
-func _focus_on_hero() -> void:
-	_camera.focus_on(_map.cell_center(sim.hero.cell))
+func _focus_on_hero(hero: Hero) -> void:
+	_camera.focus_on(_map.cell_center(hero.cell))
 
 
-func _on_hero_wounded() -> void:
-	_hud.show_banner("%s was wounded and fell back!" % sim.hero.hero_name)
+func _on_hero_wounded(hero: Hero) -> void:
+	_hud.show_banner("%s was wounded and fell back!" % hero.hero_name)

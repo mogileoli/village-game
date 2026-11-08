@@ -154,14 +154,14 @@ func _on_hit(attackers: Array[Vector2i], _damage: int) -> void:
 
 
 ## The hero's slash, arrow or axe blow, flying up to the dragon.
-func _on_hero_attacked(from_cell: Vector2i) -> void:
+func _on_hero_attacked(hero: Hero) -> void:
 	var shot := Sprite2D.new()
 	shot.texture = HERO_SHOTS_TEXTURE
 	shot.hframes = HERO_SHOT_FRAMES
-	shot.frame = _sim.hero.weapon_index()
+	shot.frame = hero.weapon_index()
 	shot.visible = false
 	add_child(shot)
-	_drops.append({"sprite": shot, "from": _map.cell_center(from_cell) + VILLAGER_HANDS, "age": 0.0, "aimed": true})
+	_drops.append({"sprite": shot, "from": _map.cell_center(hero.cell) + VILLAGER_HANDS, "age": 0.0, "aimed": true})
 
 
 func _update_drops(sim_delta: float) -> void:

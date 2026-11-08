@@ -1,6 +1,6 @@
 class_name Hero
 extends Villager
-## The village's one named dragon hunter. Walks like a villager but has no home
+## A named dragon hunter. Walks like a villager but has no home
 ## or job, and doesn't count toward the population. VillageSim moves them.
 
 const MAX_NAME_LENGTH := 16
@@ -31,6 +31,8 @@ var health := 0
 ## Knocked out of the fight. Stays true until fully healed.
 var wounded := false
 var dragons_slain := 0
+## Whether this hero landed a blow on the current visit's dragon.
+var fought := false
 
 
 static func clean_name(text: String) -> String:
@@ -95,5 +97,6 @@ func to_data() -> Dictionary:
 		"health": health,
 		"wounded": wounded,
 		"dragons_slain": dragons_slain,
+		"fought": fought,
 	})
 	return data
