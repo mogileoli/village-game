@@ -41,8 +41,13 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 6
+const SAVE_VERSION := 7
+## The first save version that can have roads on water, which are bridges.
+const FIRST_BRIDGE_VERSION := 7
 const ROAD_COST := 1
+const BRIDGE_COST := 5
+## Wood gained from each forest cell cleared.
+const CLEARED_FOREST_WOOD := 1
 ## Cells walked per tick. Path costs match them, so paths take the quickest route.
 const GRASS_WALK_SPEED := 0.75
 const ROAD_WALK_SPEED := 1.5
@@ -161,8 +166,13 @@ func has_road(cell: Vector2i) -> bool:
 	return _roads.has(cell)
 
 
+## A bridge is a road on a water cell, so people walk on it just as fast.
+func is_bridge(cell: Vector2i) -> bool:
+	return has_road(cell) and terrain_at(cell) == Terrain.WATER
+
+
 func is_walkable(cell: Vector2i) -> bool:
-	return in_bounds(cell) and terrain_at(cell) == Terrain.GRASS and not _buildings.has(cell)
+	return in_bounds(cell) and not _buildings.has(cell) and (terrain_at(cell) == Terrain.GRASS or _roads.has(cell))
 
 
 func walk_speed(villager: Villager) -> float:
@@ -246,9 +256,44 @@ func place_road(cell: Vector2i) -> bool:
 	return true
 
 
+func can_place_bridge(cell: Vector2i) -> bool:
+	return in_bounds(cell) and terrain_at(cell) == Terrain.WATER and not _roads.has(cell) and wood >= BRIDGE_COST
+
+
+func place_bridge(cell: Vector2i) -> bool:
+	if not can_place_bridge(cell):
+		return false
+	wood -= BRIDGE_COST
+	_roads[cell] = true
+	_layout_changed(cell)
+	cell_changed.emit(cell)
+	stats_changed.emit()
+	return true
+
+
+func can_clear_forest(cell: Vector2i) -> bool:
+	return in_bounds(cell) and terrain_at(cell) == Terrain.FOREST
+
+
+func clear_forest(cell: Vector2i) -> bool:
+	if not can_clear_forest(cell):
+		return false
+	_terrain[cell.y * width + cell.x] = Terrain.GRASS
+	wood += CLEARED_FOREST_WOOD
+	_layout_changed(cell)
+	cell_changed.emit(cell)
+	stats_changed.emit()
+	return true
+
+
 func demolish(cell: Vector2i) -> bool:
 	if _roads.erase(cell):
-		_update_grid_cell(cell)
+		if terrain_at(cell) == Terrain.WATER:
+			wood += BRIDGE_COST / 2
+			_layout_changed(cell)
+			_move_villagers_off(cell)
+		else:
+			_update_grid_cell(cell)
 		cell_changed.emit(cell)
 		stats_changed.emit()
 		return true
@@ -304,6 +349,10 @@ func to_save_data() -> Dictionary:
 		saved_buildings.append({"x": cell.x, "y": cell.y, "type": String(_buildings[cell])})
 	_match_villagers_to_population()
 	_update_jobs()
+	# A path crossing something just built or removed wouldn't load back.
+	for villager in villagers:
+		if villager.state == Villager.State.WALKING and villager.layout_version != _layout_version:
+			_reroute(villager)
 	var saved_villagers: Array[Dictionary] = []
 	for villager in villagers:
 		saved_villagers.append(villager.to_data())
@@ -385,7 +434,7 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 		sim._buildings[cell] = type
 	if sim.population > sim.housing():
 		return null
-	if version >= 3 and not sim._load_roads(data):
+	if version >= 3 and not sim._load_roads(data, version):
 		return null
 	# Saves from before the dragon keep the new dragon chosen by _init().
 	if version >= 2 and not sim._load_dragon(data, version):
@@ -459,14 +508,15 @@ func _read_cell(value: Variant) -> Vector2i:
 	return cell if in_bounds(cell) else INVALID_CELL
 
 
-func _load_roads(data: Dictionary) -> bool:
+func _load_roads(data: Dictionary, version: int) -> bool:
 	if not data.get("roads") is Array:
 		return false
 	for entry: Variant in data.roads:
 		if not entry is Dictionary:
 			return false
 		var cell := Vector2i(_whole_number(entry, "x"), _whole_number(entry, "y"))
-		if not is_walkable(cell) or _roads.has(cell):
+		var valid_bridge := version >= FIRST_BRIDGE_VERSION and in_bounds(cell) and terrain_at(cell) == Terrain.WATER
+		if not (is_walkable(cell) or valid_bridge) or _roads.has(cell):
 			return false
 		_roads[cell] = true
 	return true
@@ -817,6 +867,13 @@ func _layout_changed(cell: Vector2i) -> void:
 	_update_grid_cell(cell)
 	_layout_version += 1
 	_jobs_need_update = true
+
+
+## Nobody is left standing in the water when a bridge goes.
+func _move_villagers_off(cell: Vector2i) -> void:
+	for villager in villagers:
+		if villager.cell == cell:
+			villager.cell = _nearest_walkable(cell)
 
 
 func _match_villagers_to_population() -> void:

@@ -9,6 +9,10 @@ signal menu_toggled(is_open: bool)
 
 const DEMOLISH := &"demolish"
 const ROAD := &"road"
+const BRIDGE := &"bridge"
+const CLEAR_FOREST := &"clear_forest"
+## Tools that keep working as the mouse is dragged across the map.
+const PAINT_TOOLS: Array[StringName] = [ROAD, BRIDGE, CLEAR_FOREST]
 const WOOD_ICON := preload("res://assets/ui/icon_wood.png")
 
 ## Offered as the name when saving.
@@ -27,7 +31,8 @@ var _tool_buttons := ButtonGroup.new()
 @onready var _dragon_fill: ColorRect = %DragonFill
 @onready var _dragon_track: Control = %DragonTrack
 @onready var _clock: Label = %Clock
-@onready var _tools: HBoxContainer = %Tools
+@onready var _building_tools: HBoxContainer = %BuildingTools
+@onready var _land_tools: HBoxContainer = %LandTools
 @onready var _status: Label = %Status
 @onready var _status_timer: Timer = %StatusTimer
 @onready var _load_button: Button = %LoadButton
@@ -41,9 +46,11 @@ func _ready() -> void:
 	_tool_buttons.allow_unpress = true
 	for type: StringName in VillageSim.BUILDINGS:
 		var building: Dictionary = VillageSim.BUILDINGS[type]
-		_add_tool("%s %d" % [building.get("label", building.name), building.cost], type, WOOD_ICON)
-	_add_tool("Road %d" % VillageSim.ROAD_COST, ROAD, WOOD_ICON)
-	_add_tool("Demolish", DEMOLISH, null)
+		_add_tool(_building_tools, "%s %d" % [building.get("label", building.name), building.cost], type, WOOD_ICON)
+	_add_tool(_land_tools, "Road %d" % VillageSim.ROAD_COST, ROAD, WOOD_ICON)
+	_add_tool(_land_tools, "Bridge %d" % VillageSim.BRIDGE_COST, BRIDGE, WOOD_ICON)
+	_add_tool(_land_tools, "Clear Trees", CLEAR_FOREST, null)
+	_add_tool(_land_tools, "Demolish", DEMOLISH, null)
 	%SaveButton.pressed.connect(func() -> void: _save_menu.open_for_save(village_name))
 	_load_button.pressed.connect(_save_menu.open_for_load)
 	_save_menu.save_chosen.connect(save_requested.emit)
@@ -101,7 +108,7 @@ func clear_tool() -> void:
 		pressed.button_pressed = false
 
 
-func _add_tool(label: String, tool: StringName, icon: Texture2D) -> void:
+func _add_tool(row: HBoxContainer, label: String, tool: StringName, icon: Texture2D) -> void:
 	var button := Button.new()
 	button.text = label
 	button.icon = icon
@@ -115,4 +122,4 @@ func _add_tool(label: String, tool: StringName, icon: Texture2D) -> void:
 		elif _tool_buttons.get_pressed_button() == null:
 			tool_selected.emit(&"")
 	)
-	_tools.add_child(button)
+	row.add_child(button)

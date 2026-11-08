@@ -20,6 +20,11 @@ func _init() -> void:
 	_test_roads_and_buildings_block_each_other()
 	_test_demolishing_roads()
 	_test_roads_survive_save_and_load()
+	_test_clearing_forest()
+	_test_bridge_rules()
+	_test_bridges_connect_villagers()
+	_test_removing_a_bridge_underfoot()
+	_test_bridges_and_clearings_survive_save_and_load()
 	_test_houses_and_workplaces()
 	_test_no_workers_means_no_production()
 	_test_only_people_inside_produce()
@@ -309,10 +314,118 @@ func _test_roads_survive_save_and_load() -> void:
 	_check(loaded != null and loaded.has_road(Vector2i(21, 20)), "roads load back")
 	var data := sim.to_save_data()
 	var water := _grass_cell(sim, VillageSim.Terrain.WATER)
+	var forest := _grass_cell(sim, VillageSim.Terrain.FOREST)
+	data.roads = [{"x": forest.x, "y": forest.y}]
+	_check(VillageSim.from_save_data(data) == null, "rejects a road in the forest")
 	data.roads = [{"x": water.x, "y": water.y}]
-	_check(VillageSim.from_save_data(data) == null, "rejects a road on water")
+	data.version = VillageSim.FIRST_BRIDGE_VERSION - 1
+	_check(VillageSim.from_save_data(data) == null, "rejects a road on water from before bridges")
+	data.version = VillageSim.SAVE_VERSION
 	data.roads = [{"x": 20, "y": 20}, {"x": 20, "y": 20}]
 	_check(VillageSim.from_save_data(data) == null, "rejects duplicate roads")
+
+
+func _test_clearing_forest() -> void:
+	var sim := VillageSim.new()
+	var forest := _grass_cell(sim, VillageSim.Terrain.FOREST)
+	var wood_before := sim.wood
+	_check(not sim.is_walkable(forest), "forest can't be walked through")
+	_check(not sim.place(&"house", forest), "can't build in the forest")
+	_check(sim.clear_forest(forest), "can clear forest")
+	_check(sim.terrain_at(forest) == VillageSim.Terrain.GRASS, "cleared forest is grass")
+	_check(sim.wood == wood_before + VillageSim.CLEARED_FOREST_WOOD, "clearing forest gives wood")
+	_check(sim.is_walkable(forest), "cleared forest can be walked on")
+	_check(sim.place(&"house", forest), "can build where forest was cleared")
+	wood_before = sim.wood
+	_check(not sim.clear_forest(forest), "can't clear the same forest twice")
+	_check(not sim.clear_forest(Vector2i(20, 20)), "can't clear grass")
+	_check(not sim.clear_forest(_grass_cell(sim, VillageSim.Terrain.WATER)), "can't clear water")
+	_check(not sim.clear_forest(Vector2i(-1, 0)), "can't clear off the map")
+	_check(sim.wood == wood_before, "failed clearing gives nothing")
+
+
+func _test_bridge_rules() -> void:
+	var sim := VillageSim.new()
+	var water := _grass_cell(sim, VillageSim.Terrain.WATER)
+	var wood_before := sim.wood
+	_check(not sim.is_walkable(water), "water can't be walked on")
+	_check(sim.place_bridge(water), "can build a bridge on water")
+	_check(sim.is_bridge(water) and sim.is_walkable(water), "bridges can be walked on")
+	_check(sim.wood == wood_before - VillageSim.BRIDGE_COST, "bridge costs wood")
+	_check(not sim.place_bridge(water), "can't build a bridge twice")
+	_check(not sim.place_bridge(Vector2i(20, 20)), "no bridge on grass")
+	_check(not sim.place_bridge(_grass_cell(sim, VillageSim.Terrain.FOREST)), "no bridge in the forest")
+	_check(not sim.place_bridge(Vector2i(-1, 0)), "no bridge off the map")
+	_check(not sim.place(&"house", water), "can't build on a bridge")
+	_check(not sim.place_road(water), "can't put a road on a bridge")
+	wood_before = sim.wood
+	_check(sim.demolish(water), "can demolish a bridge")
+	_check(not sim.is_walkable(water), "demolished bridge is water again")
+	_check(sim.wood == wood_before + VillageSim.BRIDGE_COST / 2, "demolishing a bridge refunds half")
+	sim.wood = VillageSim.BRIDGE_COST - 1
+	_check(not sim.place_bridge(water), "no bridge without wood")
+
+
+## A house and a farm on opposite banks of a river running down column 22.
+func _river_sim() -> VillageSim:
+	var sim := _settled({}, 0)
+	for y in range(sim.height):
+		for x in range(sim.width):
+			sim._terrain[y * sim.width + x] = VillageSim.Terrain.WATER if x == 22 else VillageSim.Terrain.GRASS
+	sim._rebuild_grid()
+	sim.place(&"house", Vector2i(20, 20))
+	sim.place(&"farm", Vector2i(24, 20))
+	sim.population = 2
+	return sim
+
+
+func _test_bridges_connect_villagers() -> void:
+	var sim := _river_sim()
+	sim.tick()
+	_check(sim.workers_at(Vector2i(24, 20)) == 0, "a river cuts people off from work")
+	sim.place_bridge(Vector2i(22, 20))
+	_check(sim.workers_at(Vector2i(24, 20)) == 2, "a bridge lets people reach work")
+	var food_before := sim.food
+	var crossed := false
+	for i in range(40):
+		sim.tick()
+		crossed = crossed or sim.food > food_before
+	_check(crossed, "people cross the bridge and produce")
+	sim.demolish(Vector2i(22, 20))
+	_check(sim.workers_at(Vector2i(24, 20)) == 0, "removing the bridge cuts them off again")
+
+
+func _test_removing_a_bridge_underfoot() -> void:
+	var sim := _river_sim()
+	var bridge := Vector2i(22, 20)
+	sim.place_bridge(bridge)
+	var walker: Villager = null
+	for i in range(100):
+		sim.tick()
+		for villager in sim.villagers:
+			if villager.cell == bridge:
+				walker = villager
+		if walker != null:
+			break
+	_check(walker != null, "someone walks onto the bridge")
+	sim.demolish(bridge)
+	_check(walker != null and sim.is_walkable(walker.cell), "nobody is left standing in the water")
+	_check(VillageSim.from_save_data(sim.to_save_data()) != null, "can save right after removing a bridge in use")
+	for i in range(10):
+		sim.tick()
+		_check(sim.is_walkable(walker.cell) or walker.state not in [Villager.State.WALKING, Villager.State.OUTSIDE], "stays out of the water")
+
+
+func _test_bridges_and_clearings_survive_save_and_load() -> void:
+	var sim := VillageSim.new()
+	var water := _grass_cell(sim, VillageSim.Terrain.WATER)
+	var forest := _grass_cell(sim, VillageSim.Terrain.FOREST)
+	sim.place_bridge(water)
+	sim.clear_forest(forest)
+	SaveGame.write(sim, TEST_SAVE)
+	var loaded := SaveGame.read(TEST_SAVE)
+	_check(loaded != null and loaded.is_bridge(water) and loaded.is_walkable(water), "bridges load back")
+	_check(loaded != null and loaded.terrain_at(forest) == VillageSim.Terrain.GRASS, "cleared forest stays cleared")
 
 
 func _test_houses_and_workplaces() -> void:

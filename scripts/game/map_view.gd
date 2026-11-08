@@ -9,6 +9,7 @@ const WATER_SOURCE := 1
 const SHORE_SOURCE := 0
 const SCORCH_SOURCE := 0
 const ROAD_SOURCE := 0
+const BRIDGE_SOURCE := 1
 const IDLE_SOURCE := 0
 ## Atlas columns for grass. Plain tiles repeat so flowers stay occasional.
 const GRASS_TILES := [0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 0, 1, 0]
@@ -61,9 +62,7 @@ func bind(sim: VillageSim) -> void:
 	_buildings.clear()
 	for y in range(_sim.height):
 		for x in range(_sim.width):
-			var cell := Vector2i(x, y)
-			_draw_terrain(cell)
-			_on_cell_changed(cell)
+			_on_cell_changed(Vector2i(x, y))
 	_draw_idle_marks()
 
 
@@ -128,17 +127,20 @@ func _draw_ground_details(cell: Vector2i) -> void:
 
 
 ## Road tiles join neighboring roads, and a building's door to the north.
+## Bridges also join any ground people can step onto from them.
 func _draw_road(cell: Vector2i) -> void:
 	if not _sim.has_road(cell):
 		_roads.erase_cell(cell)
 		return
+	var bridge := _sim.is_bridge(cell)
 	var joined_sides := 0
 	for index in range(SIDES.size()):
-		if _sim.has_road(cell + SIDES[index]):
+		var neighbor: Vector2i = cell + SIDES[index]
+		if _sim.has_road(neighbor) or (bridge and _sim.is_walkable(neighbor)):
 			joined_sides |= 1 << index
 	if _sim.building_at(cell + Vector2i.UP) != &"":
 		joined_sides |= 1
-	_roads.set_cell(cell, ROAD_SOURCE, Vector2i(joined_sides, 0))
+	_roads.set_cell(cell, BRIDGE_SOURCE if bridge else ROAD_SOURCE, Vector2i(joined_sides, 0))
 
 
 ## Scorch tiles have rough edges only on sides that don't touch more scorch.
@@ -195,6 +197,7 @@ func _is_land(cell: Vector2i) -> bool:
 
 
 func _on_cell_changed(cell: Vector2i) -> void:
+	_draw_terrain(cell)
 	_draw_ground_details(cell)
 	for side: Vector2i in SIDES:
 		_draw_ground_details(cell + side)
@@ -258,12 +261,13 @@ func _make_scorch_tileset() -> TileSet:
 
 func _make_road_tileset() -> TileSet:
 	var tiles := _make_tileset()
-	var source := TileSetAtlasSource.new()
-	source.texture = preload("res://assets/tiles/roads.png")
-	source.texture_region_size = TILE_SIZE
-	for joined_sides in range(16):
-		source.create_tile(Vector2i(joined_sides, 0))
-	tiles.add_source(source, ROAD_SOURCE)
+	for entry: Array in [[preload("res://assets/tiles/roads.png"), ROAD_SOURCE], [preload("res://assets/tiles/bridges.png"), BRIDGE_SOURCE]]:
+		var source := TileSetAtlasSource.new()
+		source.texture = entry[0]
+		source.texture_region_size = TILE_SIZE
+		for joined_sides in range(16):
+			source.create_tile(Vector2i(joined_sides, 0))
+		tiles.add_source(source, entry[1])
 	return tiles
 
 

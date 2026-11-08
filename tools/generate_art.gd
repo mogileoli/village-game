@@ -117,6 +117,7 @@ func _init() -> void:
 	_save_fire()
 	_save_dragon()
 	_save_roads()
+	_save_bridges()
 	_save_villagers()
 	_save_cursor()
 	_save_icons()
@@ -719,6 +720,43 @@ func _save_roads() -> void:
 				var color := ROAD_LIGHT if roll > 0.12 else ROAD_MID
 				image.set_pixel(x0 + x, y, ROAD_EDGE if at_edge else color)
 	image.save_png("res://assets/tiles/roads.png")
+
+
+# --- Bridges ---
+
+## Planks lie across the direction of travel, so the arms decide which way they run.
+func _plank_color(x: int, y: int, joined: int) -> Color:
+	const LOW := 5
+	const HIGH := CELL - 6
+	var north_south_arm := y < LOW or y > HIGH
+	var east_west_arm := x < LOW or x > HIGH
+	var runs_east_west := east_west_arm or (not north_south_arm and joined & 10 and not joined & 5)
+	var along := x if runs_east_west else y
+	if along % 4 == 3:
+		return WOOD_DARK
+	return WOOD_MID if (along / 4) % 3 == 1 else WOOD_LIGHT
+
+
+## The same shapes as roads, so the two line up where they meet.
+func _save_bridges() -> void:
+	var image := _new_image(CELL * 16, CELL)
+	for joined in range(16):
+		var x0 := joined * CELL
+		for y in range(CELL):
+			for x in range(CELL):
+				if not _on_road(x, y, joined):
+					if y > 0 and y < CELL - 1 and _on_road(x, y - 1, joined):
+						image.set_pixel(x0 + x, y, W_DEEP)
+					continue
+				var at_edge := false
+				for offset: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					if not _on_road(x + offset.x, y + offset.y, joined):
+						at_edge = true
+				if at_edge:
+					image.set_pixel(x0 + x, y, WOOD_END if (x + y) % 8 == 0 else WOOD_DARK)
+				else:
+					image.set_pixel(x0 + x, y, _plank_color(x, y, joined))
+	image.save_png("res://assets/tiles/bridges.png")
 
 
 # --- Villagers ---

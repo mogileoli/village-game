@@ -335,6 +335,15 @@ offset_bottom = -6.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="Tools" type="HBoxContainer" parent="HUD/ToolPanel"]
+[node name="Rows" type="VBoxContainer" parent="HUD/ToolPanel"]
+layout_mode = 2
+
+[node name="BuildingTools" type="HBoxContainer" parent="HUD/ToolPanel/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
+alignment = 1
+
+[node name="LandTools" type="HBoxContainer" parent="HUD/ToolPanel/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+alignment = 1

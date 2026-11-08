@@ -10,7 +10,7 @@ var speed := 1
 var _active_tool := &""
 var _tick_timer := 0.0
 var _speed_before_pause := 1
-var _last_road_cell := Vector2i.ZERO
+var _last_painted_cell := Vector2i.ZERO
 var _menu_open := false
 
 @onready var _map: MapView = $Map
@@ -99,9 +99,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif (
 		event is InputEventMouseMotion
 		and event.button_mask & MOUSE_BUTTON_MASK_LEFT
-		and _active_tool == Hud.ROAD
+		and _active_tool in Hud.PAINT_TOOLS
 	):
-		_paint_road_to(_map.cell_at_mouse())
+		_paint_to(_map.cell_at_mouse())
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_ESCAPE:
@@ -141,23 +141,33 @@ func _on_dragon_left(driven_off: bool, destroyed: int) -> void:
 func _use_tool(cell: Vector2i) -> void:
 	if _active_tool == Hud.DEMOLISH:
 		sim.demolish(cell)
-	elif _active_tool == Hud.ROAD:
-		sim.place_road(cell)
-		_last_road_cell = cell
+	elif _active_tool in Hud.PAINT_TOOLS:
+		_paint(cell)
+		_last_painted_cell = cell
 	elif _active_tool != &"":
 		sim.place(_active_tool, cell)
 
 
+func _paint(cell: Vector2i) -> void:
+	match _active_tool:
+		Hud.ROAD:
+			sim.place_road(cell)
+		Hud.BRIDGE:
+			sim.place_bridge(cell)
+		Hud.CLEAR_FOREST:
+			sim.clear_forest(cell)
+
+
 ## Fills every cell since the last one, so fast drags leave no gaps.
-func _paint_road_to(target: Vector2i) -> void:
-	var cell := _last_road_cell
+func _paint_to(target: Vector2i) -> void:
+	var cell := _last_painted_cell
 	while cell != target:
 		if cell.x != target.x:
 			cell.x += signi(target.x - cell.x)
 		else:
 			cell.y += signi(target.y - cell.y)
-		sim.place_road(cell)
-	_last_road_cell = target
+		_paint(cell)
+	_last_painted_cell = target
 
 
 func _update_cursor() -> void:
@@ -170,6 +180,10 @@ func _update_cursor() -> void:
 		_map.show_cursor(cell, sim.building_at(cell) != &"" or sim.has_road(cell), &"")
 	elif _active_tool == Hud.ROAD:
 		_map.show_cursor(cell, sim.can_place_road(cell), &"")
+	elif _active_tool == Hud.BRIDGE:
+		_map.show_cursor(cell, sim.can_place_bridge(cell), &"")
+	elif _active_tool == Hud.CLEAR_FOREST:
+		_map.show_cursor(cell, sim.can_clear_forest(cell), &"")
 	elif _active_tool != &"":
 		_map.show_cursor(cell, sim.can_place(_active_tool, cell), _active_tool)
 	else:
