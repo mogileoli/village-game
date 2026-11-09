@@ -17,6 +17,8 @@ const ALTITUDE := 56.0
 const MOUTH_OFFSET := Vector2(36, 12)
 const ORBIT_RADIUS := Vector2(30, 14)
 const ORBIT_SPEED := 1.4
+## Ticks spent flying between targets. It lands one tick early, ready to breathe fire.
+const GLIDE_TICKS := VillageSim.DRAGON_STRIKE_INTERVAL - 1
 const FLAPS_PER_SECOND := 5.0
 const FLAMES_PER_SECOND := 9.0
 const FIRE_SECONDS := 3.0
@@ -102,12 +104,12 @@ func _ground_position(state: VillageSim.DragonState, tick_fraction: float) -> Ve
 			return target + ENTRY_OFFSET * ticks_left / VillageSim.DRAGON_INBOUND_TICKS
 		VillageSim.DragonState.RAMPAGE:
 			_was_departing = false
-			# Glide to each new target over the tick after a strike, circling all the while.
+			# Glide to each new target between strikes, circling all the while.
 			var since_strike := _sim.dragon_rampage_ticks - _sim.dragon_last_strike_tick() + tick_fraction
 			var previous := _map.cell_center(_sim.dragon_previous_target)
 			var angle := _time * ORBIT_SPEED
 			var orbit := Vector2(cos(angle), sin(angle)) * ORBIT_RADIUS
-			return previous.lerp(target, clampf(since_strike, 0.0, 1.0)) + orbit
+			return previous.lerp(target, clampf(since_strike / GLIDE_TICKS, 0.0, 1.0)) + orbit
 	if not _was_departing:
 		_was_departing = true
 		_departure_start = _shadow.position if _shadow.visible else target
