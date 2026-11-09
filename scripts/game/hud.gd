@@ -8,6 +8,8 @@ signal load_requested(slot: int)
 signal menu_toggled(is_open: bool)
 signal hero_created(hero_name: String, armor: StringName, weapon: StringName, look: StringName)
 signal hero_focus_requested(hero: Hero)
+signal hero_details_closed
+signal teleport_pressed(hero: Hero)
 
 const DEMOLISH := &"demolish"
 const ROAD := &"road"
@@ -19,6 +21,10 @@ const HERO_TRACK_COLOR := Color(0.09, 0.06, 0.13, 1)
 const HERO_TRACK_SIZE := Vector2(48, 6)
 const HERO_ROW_HEIGHT := 20
 const HERO_ROSTER_MAX_HEIGHT := 200
+## Shorter while a hero's details are open, so both fit above the toolbar.
+const HERO_ROSTER_SHORT_HEIGHT := 80
+const TELEPORT_TEXT := "Teleport"
+const TELEPORT_CANCEL_TEXT := "Cancel teleport"
 const HERO_HEALTHY_COLOR := Color(0.35, 0.75, 0.3)
 const HERO_WOUNDED_COLOR := Color(0.82, 0.19, 0.16)
 const WOOD_ICON := preload("res://assets/ui/icon_wood.png")
@@ -28,6 +34,7 @@ var village_name := SaveGame.OLD_SAVE_DISPLAY_NAME
 
 var _tool_buttons := ButtonGroup.new()
 var _roster_heroes: Array[Hero] = []
+var _details_hero: Hero = null
 
 @onready var _wood: Label = %Wood
 @onready var _food: Label = %Food
@@ -43,6 +50,10 @@ var _roster_heroes: Array[Hero] = []
 @onready var _hero_button: Button = %HeroButton
 @onready var _hero_scroll: ScrollContainer = %HeroScroll
 @onready var _hero_roster: VBoxContainer = %HeroRoster
+@onready var _hero_details: Control = %HeroDetails
+@onready var _hero_details_name: Label = %HeroDetailsName
+@onready var _hero_details_stats: Label = %HeroDetailsStats
+@onready var _teleport_button: Button = %TeleportButton
 @onready var _hero_creator: HeroCreator = %HeroCreator
 @onready var _building_tools: HBoxContainer = %BuildingTools
 @onready var _land_tools: HBoxContainer = %LandTools
@@ -70,6 +81,8 @@ func _ready() -> void:
 	_save_menu.load_chosen.connect(load_requested.emit)
 	_save_menu.visibility_changed.connect(func() -> void: menu_toggled.emit(_save_menu.visible))
 	_hero_button.pressed.connect(func() -> void: _hero_creator.open())
+	_teleport_button.pressed.connect(func() -> void: teleport_pressed.emit(_details_hero))
+	%HeroDetailsClose.pressed.connect(hero_details_closed.emit)
 	_hero_creator.hero_chosen.connect(hero_created.emit)
 	_hero_creator.visibility_changed.connect(func() -> void: menu_toggled.emit(_hero_creator.visible))
 	_status_timer.timeout.connect(func() -> void: _status.text = "")
@@ -126,6 +139,7 @@ func _show_heroes(sim: VillageSim) -> void:
 		_rebuild_roster(sim.heroes)
 	for index in range(count):
 		_update_roster_row(_hero_roster.get_child(index), sim.heroes[index])
+	_update_hero_details(sim)
 
 
 func _rebuild_roster(heroes: Array[Hero]) -> void:
@@ -151,7 +165,47 @@ func _rebuild_roster(heroes: Array[Hero]) -> void:
 		track.add_child(fill)
 		row.add_child(Label.new())
 		_hero_roster.add_child(row)
-	_hero_scroll.custom_minimum_size.y = mini(heroes.size() * HERO_ROW_HEIGHT, HERO_ROSTER_MAX_HEIGHT)
+	_fit_roster()
+
+
+func _fit_roster() -> void:
+	var tallest := HERO_ROSTER_SHORT_HEIGHT if _details_hero != null else HERO_ROSTER_MAX_HEIGHT
+	_hero_scroll.custom_minimum_size.y = mini(_roster_heroes.size() * HERO_ROW_HEIGHT, tallest)
+
+
+## Opens the details panel for this hero, or closes it if null.
+func show_hero_details(hero: Hero) -> void:
+	_details_hero = hero
+	_hero_details.visible = hero != null
+	set_teleporting(false)
+	_fit_roster()
+
+
+func set_teleporting(teleporting: bool) -> void:
+	_teleport_button.text = TELEPORT_CANCEL_TEXT if teleporting else TELEPORT_TEXT
+
+
+func _update_hero_details(sim: VillageSim) -> void:
+	var hero := _details_hero
+	if hero == null:
+		return
+	var status := "On patrol"
+	if hero.wounded:
+		status = "Wounded"
+	elif sim.dragon_is_visiting():
+		status = "Hunting a dragon"
+	_hero_details_name.text = hero.hero_name
+	_hero_details_stats.text = "\n".join([
+		"Status: %s" % status,
+		"Health: %d/%d" % [hero.health, hero.max_health()],
+		"Armor: %s" % Hero.ARMORS[hero.armor].name,
+		"Weapon: %s" % Hero.WEAPONS[hero.weapon].name,
+		"Look: %s" % Hero.LOOKS[hero.look].name,
+		"Speed: %.1fx" % hero.speed_factor(),
+		"Damage: %d" % hero.damage(),
+		"Reach: %s" % String.num(hero.reach()),
+		"Dragons slain: %d" % hero.dragons_slain,
+	])
 
 
 func _update_roster_row(row: Control, hero: Hero) -> void:

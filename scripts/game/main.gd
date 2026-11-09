@@ -13,6 +13,8 @@ var _speed_before_pause := 1
 var _last_painted_cell := Vector2i.ZERO
 var _menu_open := false
 var _hero_could_be_created := false
+## The hero waiting for the player to click where to send them.
+var _teleporting: Hero = null
 
 @onready var _map: MapView = $Map
 @onready var _dragon: DragonView = $Map/Dragon
@@ -23,13 +25,19 @@ var _hero_could_be_created := false
 
 func _ready() -> void:
 	_hud.tool_selected.connect(func(tool: StringName) -> void:
+		if tool != &"":
+			_cancel_teleport()
 		_active_tool = tool
 		_camera.left_drag_pans = tool == &"")
 	_hud.save_requested.connect(_save_game)
 	_hud.load_requested.connect(_load_game)
 	_hud.menu_toggled.connect(_on_menu_toggled)
 	_hud.hero_created.connect(_create_hero)
-	_hud.hero_focus_requested.connect(_focus_on_hero)
+	_hud.hero_focus_requested.connect(func(hero: Hero) -> void:
+		_select_hero(hero)
+		_focus_on_hero(hero))
+	_hud.hero_details_closed.connect(_select_hero.bind(null))
+	_hud.teleport_pressed.connect(_on_teleport_pressed)
 	SaveGame.move_old_save_to_slot()
 	_hud.set_can_load(SaveGame.any_slot_used())
 	_start_sim(VillageSim.new())
@@ -50,6 +58,7 @@ func _start_sim(new_sim: VillageSim) -> void:
 	_camera.position = _map.world_center()
 	_tick_timer = 0.0
 	_hud.hide_banner()
+	_select_hero(null)
 	_refresh_stats()
 
 
@@ -97,9 +106,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			_use_tool(_map.cell_at_mouse())
+			if _teleporting != null:
+				_teleport_to(_map.cell_at_mouse())
+			else:
+				_use_tool(_map.cell_at_mouse())
+		elif event.button_index == MOUSE_BUTTON_LEFT and _active_tool == &"" and _teleporting == null:
+			# On release, because the camera has already taken any release that ends a drag.
+			var clicked := _villagers.hero_at_mouse()
+			if clicked != null:
+				_select_hero(clicked)
 		elif event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
 			# On release, so dragging with the right button to move the map keeps the tool.
+			_cancel_teleport()
 			_hud.clear_tool()
 	elif (
 		event is InputEventMouseMotion
@@ -110,6 +128,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_ESCAPE:
+				_cancel_teleport()
 				_hud.clear_tool()
 			KEY_SPACE:
 				_toggle_pause()
@@ -181,6 +200,10 @@ func _paint_to(target: Vector2i) -> void:
 
 func _update_cursor() -> void:
 	var cell := _map.cell_at_mouse()
+	if _teleporting != null:
+		_map.hide_range()
+		_map.show_cursor(cell, sim.can_teleport_to(cell), &"")
+		return
 	if _active_tool == &"tower":
 		_map.show_range(cell, VillageSim.TOWER_RANGE)
 	else:
@@ -225,6 +248,41 @@ func _create_hero(hero_name: String, armor: StringName, weapon: StringName, look
 		var hero: Hero = sim.heroes[-1]
 		_hud.show_banner("%s has come to hunt dragons!" % hero.hero_name)
 		_focus_on_hero(hero)
+
+
+## Shows this hero's details, or closes them if null.
+func _select_hero(hero: Hero) -> void:
+	_cancel_teleport()
+	_villagers.selected_hero = hero
+	_hud.show_hero_details(hero)
+	_refresh_stats()
+
+
+func _on_teleport_pressed(hero: Hero) -> void:
+	if _teleporting != null:
+		_cancel_teleport()
+		return
+	_hud.clear_tool()
+	_teleporting = hero
+	_camera.left_drag_pans = false
+	_hud.set_teleporting(true)
+	_hud.show_status("Click where to send %s" % hero.hero_name)
+
+
+func _teleport_to(cell: Vector2i) -> void:
+	if not sim.teleport_hero(_teleporting, cell):
+		_hud.show_status("%s can't go there" % _teleporting.hero_name)
+		return
+	_hud.show_status("%s teleported" % _teleporting.hero_name)
+	_cancel_teleport()
+
+
+func _cancel_teleport() -> void:
+	if _teleporting == null:
+		return
+	_teleporting = null
+	_camera.left_drag_pans = _active_tool == &""
+	_hud.set_teleporting(false)
 
 
 func _focus_on_hero(hero: Hero) -> void:

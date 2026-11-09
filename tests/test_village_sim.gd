@@ -69,6 +69,9 @@ func _init() -> void:
 	_test_longbow_stays_out_of_the_fire()
 	_test_hero_is_wounded_and_recovers()
 	_test_hero_saves_and_plays_on_identically()
+	_test_teleport_only_to_walkable_ground()
+	_test_teleported_hero_holds_then_patrols()
+	_test_teleported_hero_still_hunts()
 	_test_older_saves_have_no_hero()
 	_test_single_hero_saves_still_load()
 	_test_rejects_bad_heroes()
@@ -1446,3 +1449,64 @@ func _test_rejects_bad_heroes() -> void:
 	var missing := data.duplicate(true)
 	missing.erase("dragon_slain")
 	_check(VillageSim.from_save_data(missing) == null, "rejects a save missing the slain flag")
+
+
+## A walkable cell well away from the village used by _hero_ready_village.
+func _far_cell(sim: VillageSim) -> Vector2i:
+	for y in range(39, -1, -1):
+		for x in range(39, -1, -1):
+			if sim.is_walkable(Vector2i(x, y)):
+				return Vector2i(x, y)
+	return Vector2i(-1, -1)
+
+
+func _test_teleport_only_to_walkable_ground() -> void:
+	var sim := _hero_ready_village()
+	var hero: Hero = sim.heroes[0]
+	var start := hero.cell
+	var water := Vector2i(-1, -1)
+	for y in range(40):
+		for x in range(40):
+			if sim.terrain_at(Vector2i(x, y)) == VillageSim.Terrain.WATER:
+				water = Vector2i(x, y)
+	_check(not sim.teleport_hero(hero, water), "can't teleport onto water")
+	_check(not sim.teleport_hero(hero, _first_building(sim)), "can't teleport onto a building")
+	_check(not sim.teleport_hero(hero, Vector2i(99, 99)), "can't teleport off the map")
+	_check(hero.cell == start, "refused teleports don't move the hero")
+	var stranger := Hero.create("Zed", &"leather", &"longbow", &"frost")
+	_check(not sim.teleport_hero(stranger, _far_cell(sim)), "only the village's own heroes teleport")
+	for i in range(30):
+		sim.tick()
+		if hero.state == Villager.State.WALKING:
+			break
+	_check(hero.state == Villager.State.WALKING, "hero is out walking")
+	var far := _far_cell(sim)
+	_check(sim.teleport_hero(hero, far), "can teleport mid-walk")
+	_check(hero.cell == far and hero.path.is_empty() and hero.state == Villager.State.OUTSIDE, "the trip is dropped")
+	var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(sim.to_save_data())))
+	_check(loaded != null and loaded.heroes[0].cell == far, "a teleported hero saves and loads")
+
+
+func _test_teleported_hero_holds_then_patrols() -> void:
+	var sim := _hero_ready_village()
+	var hero: Hero = sim.heroes[0]
+	var far := _far_cell(sim)
+	sim.teleport_hero(hero, far)
+	for i in range(VillageSim.HERO_TELEPORT_HOLD - 1):
+		sim.tick()
+	_check(hero.cell == far, "the hero holds their new spot: %s" % hero.cell)
+	for i in range(20):
+		sim.tick()
+	_check(hero.cell != far, "and later goes back on patrol")
+
+
+func _test_teleported_hero_still_hunts() -> void:
+	var sim := _hero_ready_village()
+	var hero: Hero = sim.heroes[0]
+	sim.teleport_hero(hero, _far_cell(sim))
+	var hits := [0]
+	sim.hero_attacked.connect(func(_hero: Hero) -> void: hits[0] += 1)
+	_start_long_fight(sim, 100000)
+	for i in range(45):
+		sim.tick()
+	_check(hits[0] > 0, "a dragon calls a teleported hero away from their post")

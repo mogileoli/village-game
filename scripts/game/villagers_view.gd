@@ -9,6 +9,11 @@ const HERO_WOUNDED_TINT := Color(1.0, 0.55, 0.55)
 const HERO_NAME_COLOR := Color(0.97, 0.82, 0.28)
 const HERO_NAME_WIDTH := 96.0
 const HERO_NAME_RISE := 32.0
+## Where a click counts as being on a hero, relative to their feet. Includes the name.
+const HERO_CLICK_AREA := Rect2(-10, -32, 20, 34)
+
+## This hero's name is drawn in white.
+var selected_hero: Hero = null
 const LOOKS := 4
 ## The sprite sheet row worn by trained fighters.
 const FIGHTER_LOOK := 4
@@ -82,6 +87,19 @@ func _draw_villager(villager: Villager, sprite: Sprite2D, index: int, tick_fract
 		_face(sprite, moved)
 
 
+## The hero under the mouse, or the one in front if several overlap.
+func hero_at_mouse() -> Hero:
+	var mouse := get_local_mouse_position()
+	var found: Hero = null
+	var front := -INF
+	for index in range(mini(_hero_sprites.size(), _sim.heroes.size())):
+		var feet := _hero_sprites[index].position
+		if feet.y > front and HERO_CLICK_AREA.has_point(mouse - feet):
+			found = _sim.heroes[index]
+			front = feet.y
+	return found
+
+
 func _add_hero_sprite() -> void:
 	var sprite := Sprite2D.new()
 	sprite.texture = HERO_TEXTURE
@@ -93,7 +111,6 @@ func _add_hero_sprite() -> void:
 	tag.size = Vector2(HERO_NAME_WIDTH, 0)
 	tag.position = Vector2(-HERO_NAME_WIDTH / 2.0, -HERO_NAME_RISE)
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tag.add_theme_color_override("font_color", HERO_NAME_COLOR)
 	sprite.add_child(tag)
 	_hero_sprites.append(sprite)
 
@@ -101,7 +118,9 @@ func _add_hero_sprite() -> void:
 func _draw_hero(hero: Hero, sprite: Sprite2D, tick_fraction: float) -> void:
 	sprite.frame_coords.y = hero.sprite_row()
 	sprite.modulate = HERO_WOUNDED_TINT if hero.wounded else Color.WHITE
-	sprite.get_child(0).text = hero.hero_name
+	var tag: Label = sprite.get_child(0)
+	tag.text = hero.hero_name
+	tag.modulate = Color.WHITE if hero == selected_hero else HERO_NAME_COLOR
 	if hero.state != Villager.State.WALKING:
 		sprite.position = _map.cell_center(hero.cell)
 		sprite.frame_coords.x = FRAME_DOWN

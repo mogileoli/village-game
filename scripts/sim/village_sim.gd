@@ -100,6 +100,8 @@ const HERO_MIN_POPULATION := 50
 ## One hero can be created for every this many villagers.
 const VILLAGERS_PER_HERO := 10
 const HERO_PATROL_PAUSE := Vector2i(3, 8)
+## Ticks a teleported hero holds their new spot before patrolling again.
+const HERO_TELEPORT_HOLD := 30
 ## Health regained each tick when no dragon is visiting.
 const HERO_RECOVERY := 4
 ## How far a wounded hero runs from the dragon.
@@ -905,6 +907,25 @@ func create_hero(hero_name: String, armor: StringName, weapon: StringName, look:
 	new_hero.timer = 1
 	new_hero.layout_version = _layout_version
 	heroes.append(new_hero)
+	stats_changed.emit()
+	return true
+
+
+func can_teleport_to(cell: Vector2i) -> bool:
+	return is_walkable(cell)
+
+
+## Moves a hero there at once. They wait there unless a dragon calls them away.
+func teleport_hero(hero: Hero, cell: Vector2i) -> bool:
+	if not hero in heroes or not can_teleport_to(cell):
+		return false
+	hero.cell = cell
+	hero.path.clear()
+	hero.progress = 0.0
+	hero.from_building = Villager.NO_CELL
+	hero.to_building = Villager.NO_CELL
+	hero.state = Villager.State.OUTSIDE
+	hero.timer = HERO_TELEPORT_HOLD
 	stats_changed.emit()
 	return true
 
