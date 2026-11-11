@@ -124,6 +124,7 @@ func _init() -> void:
 	_save_hero_shots()
 	_save_cursor()
 	_save_icons()
+	_save_happiness_faces()
 	_save_idle_mark()
 	_save_panels()
 	_save_font()
@@ -1155,6 +1156,52 @@ func _save_icons() -> void:
 	_dot(fighter_icon, 7, 8, INK)
 	_outline(fighter_icon, 0, 12)
 	fighter_icon.save_png("res://assets/ui/icon_fighter.png")
+
+
+const FACE_SIZE := 12
+## Miserable to delighted, matching Happiness.Level.
+const FACE_COLORS: Array[Color] = [
+	Color8(216, 96, 72), Color8(240, 152, 72), Color8(248, 208, 72), Color8(192, 216, 72), Color8(120, 200, 88),
+]
+
+
+## One 12x12 face per happiness level, side by side.
+func _save_happiness_faces() -> void:
+	var image := _new_image(FACE_SIZE * FACE_COLORS.size(), FACE_SIZE)
+	for level in range(FACE_COLORS.size()):
+		var x0 := level * FACE_SIZE
+		_ellipse(image, x0 + 5.5, 5.5, 5, 5, FACE_COLORS[level])
+		_dot(image, x0 + 3, 2, FACE_COLORS[level].lightened(0.5))
+		_dot(image, x0 + 4, 2, FACE_COLORS[level].lightened(0.5))
+		_outline(image, x0, FACE_SIZE)
+		_rect(image, x0 + 3, 3, 1, 2, INK)
+		_rect(image, x0 + 8, 3, 1, 2, INK)
+		_face_mouth(image, x0, level)
+	image.save_png("res://assets/ui/icon_happiness.png")
+
+
+func _face_mouth(image: Image, x0: int, level: int) -> void:
+	match level:
+		0:
+			_rect(image, x0 + 4, 7, 4, 1, INK)
+			_dot(image, x0 + 3, 8, INK)
+			_dot(image, x0 + 8, 8, INK)
+			_rect(image, x0 + 3, 5, 1, 2, W_LIGHT)
+		1:
+			_rect(image, x0 + 4, 7, 4, 1, INK)
+			_dot(image, x0 + 3, 8, INK)
+			_dot(image, x0 + 8, 8, INK)
+		2:
+			_rect(image, x0 + 4, 8, 4, 1, INK)
+		3:
+			_dot(image, x0 + 3, 7, INK)
+			_dot(image, x0 + 8, 7, INK)
+			_rect(image, x0 + 4, 8, 4, 1, INK)
+		4:
+			_rect(image, x0 + 3, 6, 6, 1, INK)
+			_rect(image, x0 + 3, 7, 6, 2, INK)
+			_rect(image, x0 + 4, 7, 4, 1, WHITE)
+			_rect(image, x0 + 5, 8, 2, 1, ROOF_MID)
 
 
 ## A speech bubble with an exclamation mark.

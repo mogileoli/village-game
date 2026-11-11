@@ -28,6 +28,27 @@ const TELEPORT_CANCEL_TEXT := "Cancel teleport"
 const HERO_HEALTHY_COLOR := Color(0.35, 0.75, 0.3)
 const HERO_WOUNDED_COLOR := Color(0.82, 0.19, 0.16)
 const WOOD_ICON := preload("res://assets/ui/icon_wood.png")
+## One face per Happiness.Level, side by side.
+const HAPPINESS_FACES := preload("res://assets/ui/icon_happiness.png")
+const FACE_SIZE := 12
+const FACTOR_TRACK_SIZE := Vector2(40, 5)
+const FACTOR_POOR_COLOR := Color(0.82, 0.19, 0.16)
+const FACTOR_FAIR_COLOR := Color(0.97, 0.75, 0.25)
+const FACTOR_GOOD_COLOR := Color(0.35, 0.75, 0.3)
+## Factor scores below these show as poor, then fair.
+const FACTOR_POOR_BELOW := 0.34
+const FACTOR_FAIR_BELOW := 0.67
+const HAPPINESS_PANEL_GAP := 4
+## What each Happiness.Level does to the village.
+const HAPPINESS_EFFECTS: Array[String] = [
+	"No one settles. Some leave.",
+	"Settlers come slower.",
+	"Settlers come as usual.",
+	"Settlers come faster.",
+	"Settlers come much faster.",
+]
+## Running out of food or water drives people away however happy they are.
+const SHORTAGE_EFFECT := "Shortages drive people out!"
 
 ## Offered as the name when saving.
 var village_name := SaveGame.OLD_SAVE_DISPLAY_NAME
@@ -35,6 +56,10 @@ var village_name := SaveGame.OLD_SAVE_DISPLAY_NAME
 var _tool_buttons := ButtonGroup.new()
 var _roster_heroes: Array[Hero] = []
 var _details_hero: Hero = null
+var _faces: Array[AtlasTexture] = []
+var _happiness_sim: VillageSim = null
+var _happiness_hovered := false
+var _happiness_pinned := false
 
 @onready var _wood: Label = %Wood
 @onready var _food: Label = %Food
@@ -42,6 +67,13 @@ var _details_hero: Hero = null
 @onready var _people: Label = %People
 @onready var _jobs: Label = %Jobs
 @onready var _fighters: Label = %Fighters
+@onready var _happiness_box: Control = %HappinessBox
+@onready var _happiness_icon: TextureRect = %HappinessIcon
+@onready var _happiness: Label = %Happiness
+@onready var _happiness_panel: Control = %HappinessPanel
+@onready var _happiness_title: Label = %HappinessTitle
+@onready var _happiness_factors: GridContainer = %HappinessFactors
+@onready var _happiness_effect: Label = %HappinessEffect
 @onready var _dragon_panel: Control = %DragonPanel
 @onready var _dragon_name: Label = %DragonName
 @onready var _dragon_fill: ColorRect = %DragonFill
@@ -87,6 +119,7 @@ func _ready() -> void:
 	_hero_creator.visibility_changed.connect(func() -> void: menu_toggled.emit(_hero_creator.visible))
 	_status_timer.timeout.connect(func() -> void: _status.text = "")
 	_banner_timer.timeout.connect(_banner.hide)
+	_setup_happiness()
 
 
 func show_stats(sim: VillageSim, speed: int) -> void:
@@ -96,6 +129,7 @@ func show_stats(sim: VillageSim, speed: int) -> void:
 	_people.text = "%d/%d" % [sim.population, sim.housing()]
 	_jobs.text = "Jobs %d/%d" % [sim.filled_jobs(), sim.total_jobs()]
 	_fighters.text = str(sim.fighter_count())
+	_show_happiness(sim)
 	_show_dragon(sim)
 	_show_heroes(sim)
 	_clock.text = "Paused" if speed == 0 else "Speed %dx" % speed
@@ -110,6 +144,91 @@ func show_banner(message: String) -> void:
 	_banner_text.text = message
 	_banner.show()
 	_banner_timer.start()
+
+
+## The face and its breakdown panel, which shows while hovered or after a click.
+func _setup_happiness() -> void:
+	for level in range(Happiness.Level.size()):
+		var face := AtlasTexture.new()
+		face.atlas = HAPPINESS_FACES
+		face.region = Rect2(level * FACE_SIZE, 0, FACE_SIZE, FACE_SIZE)
+		_faces.append(face)
+	for factor in Happiness.FACTORS:
+		var name_label := Label.new()
+		name_label.text = factor.label
+		_happiness_factors.add_child(name_label)
+		var track := ColorRect.new()
+		track.color = HERO_TRACK_COLOR
+		track.custom_minimum_size = FACTOR_TRACK_SIZE
+		track.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var fill := ColorRect.new()
+		fill.size = FACTOR_TRACK_SIZE
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		track.add_child(fill)
+		_happiness_factors.add_child(track)
+		var score := Label.new()
+		score.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_happiness_factors.add_child(score)
+	_happiness_box.mouse_entered.connect(func() -> void:
+		_happiness_hovered = true
+		_update_happiness_panel())
+	_happiness_box.mouse_exited.connect(func() -> void:
+		_happiness_hovered = false
+		_update_happiness_panel())
+	_happiness_box.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_happiness_pinned = not _happiness_pinned
+			_update_happiness_panel())
+
+
+func _show_happiness(sim: VillageSim) -> void:
+	_happiness_sim = sim
+	_happiness_icon.texture = _faces[sim.happiness.level()]
+	_happiness.text = str(roundi(sim.happiness.value))
+	if _happiness_panel.visible:
+		_update_happiness_panel()
+
+
+## Shows why the village feels the way it does: each factor's score, where
+## happiness is heading, and what that does to the village.
+func _update_happiness_panel() -> void:
+	_happiness_panel.visible = (_happiness_hovered or _happiness_pinned) and _happiness_sim != null
+	if not _happiness_panel.visible:
+		return
+	var sim := _happiness_sim
+	var value := roundi(sim.happiness.value)
+	var target := roundi(sim.happiness.target(sim))
+	var heading := "Holding steady."
+	if target > value:
+		heading = "Rising to %d." % target
+	elif target < value:
+		heading = "Falling to %d." % target
+	_happiness_title.text = "Happiness %d: %s" % [value, Happiness.LEVEL_NAMES[sim.happiness.level()]]
+	var scores := sim.happiness_factors()
+	for index in range(Happiness.FACTORS.size()):
+		var score: float = scores[Happiness.FACTORS[index].id]
+		var fill: ColorRect = _happiness_factors.get_child(index * 3 + 1).get_child(0)
+		fill.size.x = roundf(FACTOR_TRACK_SIZE.x * score)
+		fill.color = _factor_color(score)
+		_happiness_factors.get_child(index * 3 + 2).text = str(roundi(score * 100))
+	var effect := HAPPINESS_EFFECTS[sim.happiness.level()]
+	if sim.food == 0 or sim.water == 0:
+		effect = SHORTAGE_EFFECT
+	_happiness_effect.text = "%s\n%s" % [heading, effect]
+	_happiness_panel.reset_size()
+	var viewport_width := get_viewport().get_visible_rect().size.x
+	var x := minf(_happiness_box.global_position.x, viewport_width - _happiness_panel.size.x - HAPPINESS_PANEL_GAP)
+	var y := _happiness_box.global_position.y + _happiness_box.size.y + HAPPINESS_PANEL_GAP
+	_happiness_panel.position = Vector2(x, y)
+
+
+func _factor_color(score: float) -> Color:
+	if score < FACTOR_POOR_BELOW:
+		return FACTOR_POOR_COLOR
+	if score < FACTOR_FAIR_BELOW:
+		return FACTOR_FAIR_COLOR
+	return FACTOR_GOOD_COLOR
 
 
 ## The dragon's resolve, which water from towers and fighters wears down.
