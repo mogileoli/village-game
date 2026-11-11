@@ -89,8 +89,8 @@ var _happiness_pinned := false
 @onready var _teleport_button: Button = %TeleportButton
 @onready var _hero_creator: HeroCreator = %HeroCreator
 @onready var _playground_panel: PlaygroundPanel = %PlaygroundPanel
-@onready var _building_tools: HBoxContainer = %BuildingTools
-@onready var _land_tools: HBoxContainer = %LandTools
+@onready var _building_tools: HFlowContainer = %BuildingTools
+@onready var _land_tools: HFlowContainer = %LandTools
 @onready var _status: Label = %Status
 @onready var _status_timer: Timer = %StatusTimer
 @onready var _load_button: Button = %LoadButton
@@ -364,7 +364,7 @@ func clear_tool() -> void:
 		pressed.button_pressed = false
 
 
-func _add_tool(row: HBoxContainer, label: String, tool: StringName, icon: Texture2D) -> void:
+func _add_tool(row: HFlowContainer, label: String, tool: StringName, icon: Texture2D) -> void:
 	var button := Button.new()
 	button.text = label
 	button.icon = icon

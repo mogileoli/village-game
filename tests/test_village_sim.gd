@@ -103,6 +103,7 @@ func _init() -> void:
 	_test_demolishing_a_playground()
 	_test_playgrounds_save_and_load()
 	_test_older_saves_have_no_playgrounds()
+	_test_attractions_make_people_happier()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -1769,7 +1770,7 @@ func _test_happiness_factor_table() -> void:
 		ids.append(factor.id)
 	_check(sim.happiness_factors().keys() == ids, "every factor is scored, in order")
 	_check(&"entertainment" in ids, "there's an entertainment hook")
-	_check(sim.happiness_factors()[&"entertainment"] == Happiness.NEUTRAL_SCORE, "entertainment is neutral for now")
+	_check(sim.happiness_factors()[&"entertainment"] == Happiness.NEUTRAL_SCORE, "with no attractions, fun is neutral")
 	_check(sim.happiness.value == Happiness.START_VALUE, "a new village starts in between")
 
 
@@ -1894,6 +1895,15 @@ func _test_happiness_range_and_weights() -> void:
 	hungry.food = 0
 	hungry.water = 10000
 	_check(Happiness.level_of(hungry.happiness.target(hungry)) <= Happiness.Level.OKAY, "running out of food alone is enough to stop being happy")
+	var jobless := _happiness_village(5, {&"farm": 1})
+	jobless.population = 20
+	jobless.food = 10000
+	jobless.water = 10000
+	for house in jobless.houses():
+		jobless.place_road(house + Vector2i.DOWN)
+	jobless.tick()
+	_check(jobless.happiness_factors()[&"jobs"] < Happiness.ESSENTIAL_MINIMUM, "test village is mostly jobless")
+	_check(Happiness.level_of(jobless.happiness.target(jobless)) == Happiness.Level.OKAY, "a fed but jobless village is only okay")
 	wretched.happiness.value = 0.0
 	var in_range := true
 	for i in range(1000):
@@ -2262,3 +2272,17 @@ func _test_older_saves_have_no_playgrounds() -> void:
 		_check(loaded != null, "a version %d save loads" % version)
 		if loaded != null:
 			_check(loaded.attraction_count() == 0 and loaded.entertainment() == 0.0, "with no attractions")
+
+
+func _test_attractions_make_people_happier() -> void:
+	var sim := _settled({Vector2i(20, 20): &"house", Vector2i(20, 22): &"house", Vector2i(24, 20): &"playground"}, 8)
+	sim.wood = 10000
+	var without := sim.happiness_factors()[&"entertainment"]
+	for attraction: StringName in VillageSim.ATTRACTIONS:
+		sim.build_attraction(Vector2i(24, 20), attraction)
+	for i in range(200):
+		sim.tick()
+	var with_fun := sim.happiness_factors()[&"entertainment"]
+	_check(without == Happiness.NEUTRAL_SCORE, "no running attractions is neutral fun")
+	_check(sim.entertainment() > 0.0 and with_fun > without, "running attractions raise fun: %f" % with_fun)
+	_check(with_fun == Happiness.NEUTRAL_SCORE + (1.0 - Happiness.NEUTRAL_SCORE) * sim.entertainment(), "fun follows entertainment()")

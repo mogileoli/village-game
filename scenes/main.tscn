@@ -433,6 +433,7 @@ wait_time = 3.0
 one_shot = true
 
 [node name="ToolPanel" type="PanelContainer" parent="HUD"]
+custom_minimum_size = Vector2(628, 0)
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -446,12 +447,12 @@ grow_vertical = 0
 [node name="Rows" type="VBoxContainer" parent="HUD/ToolPanel"]
 layout_mode = 2
 
-[node name="BuildingTools" type="HBoxContainer" parent="HUD/ToolPanel/Rows"]
+[node name="BuildingTools" type="HFlowContainer" parent="HUD/ToolPanel/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 alignment = 1
 
-[node name="LandTools" type="HBoxContainer" parent="HUD/ToolPanel/Rows"]
+[node name="LandTools" type="HFlowContainer" parent="HUD/ToolPanel/Rows"]
 unique_name_in_owner = true
 layout_mode = 2
 alignment = 1

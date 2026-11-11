@@ -46,8 +46,13 @@ const HERO_GUARD := 4.0
 ## Each building a dragon destroys adds this many ticks of fear, up to the most.
 const FEAR_TICKS_PER_LOST_BUILDING := 60
 const MAX_FEAR_TICKS := 240
-## Until there's something to do for fun, it neither helps nor hurts much.
+## Without any running attractions, fun neither helps nor hurts much. Running
+## attractions raise it toward 1 as they entertain more of the village.
 const NEUTRAL_SCORE := 0.5
+## A village badly short of any of these can't be happier than OKAY, however
+## well everything else is going.
+const ESSENTIALS: Array[StringName] = [&"food", &"water", &"jobs"]
+const ESSENTIAL_MINIMUM := 0.5
 
 ## Growth effects, counted in population rounds (one per VillageSim.POPULATION_INTERVAL).
 ## Happy villages get an extra settler every this many rounds, delighted ones more often.
@@ -80,7 +85,16 @@ func target(sim: VillageSim) -> float:
 	for factor in FACTORS:
 		total += factor.weight * factor_scores[factor.id]
 		weights += factor.weight
-	return MAX_VALUE * total / weights
+	var mix := MAX_VALUE * total / weights
+	for essential in ESSENTIALS:
+		if factor_scores[essential] < ESSENTIAL_MINIMUM:
+			return minf(mix, _highest_okay_value())
+	return mix
+
+
+## Just under the HAPPY threshold.
+static func _highest_okay_value() -> float:
+	return LEVEL_THRESHOLDS[Level.HAPPY - 1] - 1.0 / STEPS_PER_POINT
 
 
 func update(sim: VillageSim) -> void:
@@ -225,5 +239,5 @@ func _score_roads(sim: VillageSim) -> float:
 
 
 ## Hook for things to do for fun, such as a playground. Neutral until there are any.
-func _score_entertainment(_sim: VillageSim) -> float:
-	return NEUTRAL_SCORE
+func _score_entertainment(sim: VillageSim) -> float:
+	return NEUTRAL_SCORE + (1.0 - NEUTRAL_SCORE) * sim.entertainment()
