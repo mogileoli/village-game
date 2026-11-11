@@ -19,6 +19,7 @@ var _teleporting: Hero = null
 @onready var _map: MapView = $Map
 @onready var _dragon: DragonView = $Map/Dragon
 @onready var _villagers: VillagersView = $Map/Actors/Villagers
+@onready var _boats: BoatsView = $Map/Actors/Boats
 @onready var _camera: CameraController = $Camera
 @onready var _hud: Hud = $HUD
 
@@ -54,6 +55,7 @@ func _start_sim(new_sim: VillageSim) -> void:
 	_map.bind(sim)
 	_dragon.bind(sim, _map)
 	_villagers.bind(sim, _map)
+	_boats.bind(sim, _map)
 	_camera.bounds = _map.world_bounds()
 	_camera.position = _map.world_center()
 	_tick_timer = 0.0
@@ -98,6 +100,7 @@ func _process(delta: float) -> void:
 		sim.tick()
 	_dragon.advance(sim_delta, _tick_timer / TICK_SECONDS)
 	_villagers.advance(sim_delta, _tick_timer / TICK_SECONDS)
+	_boats.advance(sim_delta, _tick_timer / TICK_SECONDS)
 	_update_cursor()
 
 

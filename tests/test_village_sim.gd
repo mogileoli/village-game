@@ -75,6 +75,14 @@ func _init() -> void:
 	_test_older_saves_have_no_hero()
 	_test_single_hero_saves_still_load()
 	_test_rejects_bad_heroes()
+	_test_docks_placement_rules()
+	_test_docks_fish_for_food()
+	_test_boats_stay_on_water()
+	_test_docks_rival_farms()
+	_test_cut_short_shift_loses_the_catch()
+	_test_docks_save_and_play_on_identically()
+	_test_older_saves_reject_docks()
+	_test_dragon_burns_docks_but_not_water()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -618,7 +626,7 @@ func _test_rejects_bad_villagers() -> void:
 	_check(VillageSim.from_save_data(fewer) == null, "rejects villagers not matching the population")
 	for change: Array in [
 		["state", 99], ["timer", -3], ["cell", [999, 999]], ["home", "x"], ["path", "x"],
-		["path", [[-5, 2]]], ["progress", "far"],
+		["path", [[-5, 2]]], ["progress", "far"], ["fish", -1], ["shift_ticks", "x"],
 	]:
 		var bad := good.duplicate(true)
 		bad.villagers[0][change[0]] = change[1]
@@ -1510,3 +1518,199 @@ func _test_teleported_hero_still_hunts() -> void:
 	for i in range(45):
 		sim.tick()
 	_check(hits[0] > 0, "a dragon calls a teleported hero away from their post")
+
+
+# --- Docks ---
+
+## Grass west of column 24 and a lake from there east, with a house near the shore.
+func _lake_sim(people := 0) -> VillageSim:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	for y in range(sim.height):
+		for x in range(sim.width):
+			sim._terrain[y * sim.width + x] = VillageSim.Terrain.WATER if x >= 24 else VillageSim.Terrain.GRASS
+	sim._rebuild_grid()
+	sim.wood = 1000
+	sim.food = 10000
+	sim.water = 10000
+	sim.place(&"house", Vector2i(20, 20))
+	sim.population = people
+	return sim
+
+
+func _test_docks_placement_rules() -> void:
+	var sim := _lake_sim()
+	var shore := Vector2i(24, 20)
+	_check(not sim.can_place(&"docks", Vector2i(22, 20)), "no docks on grass")
+	_check(not sim.can_place(&"docks", Vector2i(30, 20)), "no docks out of reach of land")
+	_check(not sim.can_place(&"farm", shore), "other buildings stay off the water")
+	var wood := sim.wood
+	_check(sim.place(&"docks", shore), "docks go on water beside land")
+	_check(sim.wood == wood - VillageSim.BUILDINGS.docks.cost, "docks cost wood")
+	_check(not sim.is_walkable(shore), "nobody walks onto the docks")
+	_check(not sim.place_bridge(shore), "no bridge on the docks")
+	_check(sim.place_bridge(Vector2i(24, 10)) and not sim.place(&"docks", Vector2i(24, 10)), "no docks on a bridge")
+	_check(sim.place(&"docks", Vector2i(25, 10)), "a bridge counts as ground to reach docks from")
+	sim.wood = VillageSim.BUILDINGS.docks.cost - 1
+	_check(not sim.can_place(&"docks", Vector2i(24, 30)), "no docks without wood")
+	_check(sim.demolish(shore) and sim.terrain_at(shore) == VillageSim.Terrain.WATER, "demolished docks leave water")
+
+
+## Food only comes ashore at the end of a shift, and matches what was caught.
+func _test_docks_fish_for_food() -> void:
+	var sim := _lake_sim(2)
+	var dock := Vector2i(24, 20)
+	sim.place(&"docks", dock)
+	sim.tick()
+	_check(sim.workers_at(dock) == 2, "docks take workers: %d" % sim.workers_at(dock))
+	var landings := 0
+	var fishing_ticks := 0
+	for i in range(300):
+		var food := sim.food
+		var fish_before: Array[int] = []
+		var working_before: Array[bool] = []
+		for villager in sim.villagers:
+			fish_before.append(villager.fish)
+			working_before.append(villager.state == Villager.State.WORKING)
+			if sim.is_fishing(villager):
+				fishing_ticks += 1
+		sim.tick()
+		var eaten := sim.population if sim.tick_count % VillageSim.MEAL_INTERVAL == 0 else 0
+		var expected := 0
+		# New villagers move in as the house fills; they start at home.
+		for index in range(fish_before.size()):
+			var villager := sim.villagers[index]
+			if working_before[index] and villager.state != Villager.State.WORKING:
+				expected += (fish_before[index] + VillageSim.FISH_PER_FOOD / 2) / VillageSim.FISH_PER_FOOD
+				landings += 1
+			elif villager.fish > fish_before[index]:
+				_check(villager.state == Villager.State.WORKING, "only people at work catch fish")
+		_check(sim.food - food + eaten == expected, "food is the catch brought ashore, tick %d" % sim.tick_count)
+	_check(landings >= 10, "catches come ashore: %d" % landings)
+	_check(fishing_ticks > 100, "people spend time fishing: %d" % fishing_ticks)
+	_check(sim.fish_per_tick(dock) == VillageSim.FISH_BASE_CATCH + 8, "open water out from the shore is richest")
+
+
+func _test_boats_stay_on_water() -> void:
+	var sim := _lake_sim()
+	var dock := Vector2i(24, 20)
+	sim.place(&"docks", dock)
+	var route := sim.fishing_route(dock)
+	_check(route[0] == dock and route.size() == VillageSim.FISHING_RANGE + 1, "the boat rows out as far as it may: %s" % [route])
+	for index in range(1, route.size()):
+		_check(sim.is_boatable(route[index]), "the route is open water: %s" % route[index])
+		var step := route[index] - route[index - 1]
+		_check(absi(step.x) + absi(step.y) == 1, "the route has no jumps")
+	# A pond of two cells: the boat can't go anywhere else.
+	var pond := _lake_sim()
+	for y in range(pond.height):
+		for x in range(24, pond.width):
+			pond._terrain[y * pond.width + x] = VillageSim.Terrain.GRASS
+	pond._terrain[20 * pond.width + 24] = VillageSim.Terrain.WATER
+	pond._terrain[20 * pond.width + 25] = VillageSim.Terrain.WATER
+	pond._rebuild_grid()
+	var pond_dock := Vector2i(24, 20)
+	pond.place(&"docks", pond_dock)
+	_check(pond.fishing_route(pond_dock) == ([pond_dock, Vector2i(25, 20)] as Array[Vector2i]), "a pond's boat stays in the pond")
+	_check(pond.fish_per_tick(pond_dock) == VillageSim.FISH_BASE_CATCH, "a pond has few fish")
+	pond.place_bridge(Vector2i(25, 20))
+	_check(pond.fishing_route(pond_dock) == ([pond_dock] as Array[Vector2i]), "boats don't go under bridges")
+
+
+## Food made by one workplace on the shore with two workers, over a long time.
+func _food_made(type: StringName) -> int:
+	var sim := _lake_sim(2)
+	# Both doors are on the same shore cell, so the walk to work is the same.
+	sim.place(type, Vector2i(24, 20) if type == &"docks" else Vector2i(23, 19))
+	var made := 0
+	for i in range(2000):
+		var food := sim.food
+		sim.tick()
+		made += sim.food - food + (sim.population if sim.tick_count % VillageSim.MEAL_INTERVAL == 0 else 0)
+	return made
+
+
+func _test_docks_rival_farms() -> void:
+	var farm := _food_made(&"farm")
+	var docks := _food_made(&"docks")
+	var ratio := float(docks) / farm
+	_check(ratio > 0.9 and ratio < 1.2, "docks make about as much food as a farm: %d vs %d" % [docks, farm])
+
+
+func _test_cut_short_shift_loses_the_catch() -> void:
+	var sim := _lake_sim(1)
+	var dock := Vector2i(24, 20)
+	sim.place(&"docks", dock)
+	for i in range(100):
+		sim.tick()
+		if sim.villagers[0].fish > 0:
+			break
+	var villager := sim.villagers[0]
+	_check(villager.fish > 0, "the villager goes fishing")
+	var food := sim.food
+	sim.demolish(dock)
+	sim.tick()
+	_check(villager.fish == 0 and villager.state != Villager.State.WORKING, "losing the docks loses the catch")
+	_check(sim.food <= food, "and no food comes ashore")
+
+
+func _test_docks_save_and_play_on_identically() -> void:
+	var sim := _lake_sim(4)
+	sim.place(&"house", Vector2i(20, 22))
+	sim.place(&"docks", Vector2i(24, 20))
+	sim.place(&"docks", Vector2i(24, 24))
+	var saw_fish := false
+	for round_index in range(6):
+		for i in range(9):
+			sim.tick()
+		for villager in sim.villagers:
+			saw_fish = saw_fish or villager.fish > 0
+		var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(sim.to_save_data())))
+		_check(loaded != null, "docks and boats load back")
+		if loaded == null:
+			return
+		var original := VillageSim.from_save_data(sim.to_save_data())
+		for i in range(30):
+			original.tick()
+			loaded.tick()
+		_check(loaded.to_save_data() == original.to_save_data(), "a loaded fishing village plays on identically")
+	_check(saw_fish, "the test saved while someone had fish in the boat")
+
+
+func _test_older_saves_reject_docks() -> void:
+	var sim := _lake_sim(2)
+	sim.place(&"docks", Vector2i(24, 20))
+	var data := sim.to_save_data()
+	data.version = VillageSim.FIRST_DOCKS_VERSION - 1
+	_check(VillageSim.from_save_data(data) == null, "a save from before docks can't have any")
+	var old := _village(5).to_save_data()
+	old.version = VillageSim.FIRST_DOCKS_VERSION - 1
+	for entry: Dictionary in old.villagers:
+		entry.erase("fish")
+		entry.erase("shift_ticks")
+	_check(VillageSim.from_save_data(old) != null, "a version 9 save without catches still loads")
+	var wet := sim.to_save_data()
+	wet.buildings.append({"x": 30, "y": 5, "type": "farm"})
+	_check(VillageSim.from_save_data(wet) == null, "rejects a farm on water")
+	var dry := sim.to_save_data()
+	dry.buildings.append({"x": 5, "y": 5, "type": "docks"})
+	_check(VillageSim.from_save_data(dry) == null, "rejects docks on grass")
+
+
+func _test_dragon_burns_docks_but_not_water() -> void:
+	var sim := _lake_sim()
+	var dock := Vector2i(24, 20)
+	sim.place(&"docks", dock)
+	for cell in sim._burn_around([dock] as Array[Vector2i], 2):
+		_check(sim.terrain_at(cell) == VillageSim.Terrain.GRASS, "only grass is scorched: %s" % cell)
+	_check(not sim.is_scorched(Vector2i(25, 20)), "the lake isn't scorched")
+	_check(sim.is_scorched(Vector2i(23, 20)), "the shore is")
+	for i in range(VillageSim.DRAGON_MIN_BUILDINGS):
+		sim.place(&"house", Vector2i(2 + i * 2, 2))
+	sim.dragon_target = dock
+	sim.dragon_budget = 1
+	sim.dragon_stay = VillageSim.DRAGON_FIRST_STRIKE_TICK
+	sim.dragon_rampage_ticks = VillageSim.DRAGON_FIRST_STRIKE_TICK
+	sim.dragon_state = VillageSim.DragonState.RAMPAGE
+	sim._dragon_strike()
+	_check(sim.building_at(dock) == &"", "a dragon can destroy docks")
+	_check(sim.terrain_at(dock) == VillageSim.Terrain.WATER and not sim.is_scorched(dock), "leaving unburned water")
