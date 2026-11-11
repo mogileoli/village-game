@@ -17,6 +17,7 @@
 [ext_resource type="Texture2D" path="res://assets/ui/icon_water.png" id="15"]
 [ext_resource type="Texture2D" path="res://assets/ui/icon_fighter.png" id="16"]
 [ext_resource type="Script" path="res://scripts/game/hero_creator.gd" id="17"]
+[ext_resource type="Script" path="res://scripts/game/playground_panel.gd" id="18"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -416,3 +417,14 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("17")
+
+[node name="PlaygroundPanel" type="Control" parent="HUD"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("18")

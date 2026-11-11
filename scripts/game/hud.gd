@@ -10,6 +10,7 @@ signal hero_created(hero_name: String, armor: StringName, weapon: StringName, lo
 signal hero_focus_requested(hero: Hero)
 signal hero_details_closed
 signal teleport_pressed(hero: Hero)
+signal attraction_chosen(cell: Vector2i, type: StringName)
 
 const DEMOLISH := &"demolish"
 const ROAD := &"road"
@@ -55,6 +56,7 @@ var _details_hero: Hero = null
 @onready var _hero_details_stats: Label = %HeroDetailsStats
 @onready var _teleport_button: Button = %TeleportButton
 @onready var _hero_creator: HeroCreator = %HeroCreator
+@onready var _playground_panel: PlaygroundPanel = %PlaygroundPanel
 @onready var _building_tools: HBoxContainer = %BuildingTools
 @onready var _land_tools: HBoxContainer = %LandTools
 @onready var _status: Label = %Status
@@ -85,6 +87,8 @@ func _ready() -> void:
 	%HeroDetailsClose.pressed.connect(hero_details_closed.emit)
 	_hero_creator.hero_chosen.connect(hero_created.emit)
 	_hero_creator.visibility_changed.connect(func() -> void: menu_toggled.emit(_hero_creator.visible))
+	_playground_panel.attraction_chosen.connect(attraction_chosen.emit)
+	_playground_panel.visibility_changed.connect(func() -> void: menu_toggled.emit(_playground_panel.visible))
 	_status_timer.timeout.connect(func() -> void: _status.text = "")
 	_banner_timer.timeout.connect(_banner.hide)
 
@@ -99,6 +103,17 @@ func show_stats(sim: VillageSim, speed: int) -> void:
 	_show_dragon(sim)
 	_show_heroes(sim)
 	_clock.text = "Paused" if speed == 0 else "Speed %dx" % speed
+	if _playground_panel.visible:
+		_playground_panel.refresh()
+
+
+## Opens the list of attractions under the playground entrance at this cell.
+func open_playground(sim: VillageSim, cell: Vector2i) -> void:
+	_playground_panel.open(sim, cell)
+
+
+func close_playground() -> void:
+	_playground_panel.hide()
 
 
 func show_status(message: String) -> void:

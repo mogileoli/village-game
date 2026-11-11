@@ -24,13 +24,33 @@ const BUILDINGS := {
 	&"well": {"name": "Well", "cost": 15, "water": 3, "jobs": 2},
 	&"tower": {"name": "Tower", "cost": 40, "defense": true},
 	&"training_center": {"name": "Training Center", "label": "Training", "cost": 30, "training": 1, "jobs": 2},
+	## An entrance to an underground playground. Its jobs are the staff of the
+	## attractions built under it (see ATTRACTIONS).
+	&"playground": {"name": "Playground", "cost": 25, "fun": true},
 }
+## Built under a playground entrance, at most one of each per entrance. Each runs
+## only while its staff work inside the entrance, and then entertains up to
+## "guests" villagers. Costs are in the named resources.
+const ATTRACTIONS := {
+	&"darts": {"name": "Darts", "cost": {"wood": 20}, "staff": 1, "guests": 6},
+	&"arcade": {"name": "Arcade", "cost": {"wood": 40}, "staff": 1, "guests": 10},
+	&"mini_golf": {"name": "Mini Golf", "cost": {"wood": 60}, "staff": 2, "guests": 14},
+	&"bowling_alley": {"name": "Bowling Alley", "cost": {"wood": 90}, "staff": 2, "guests": 20},
+	&"water_slide": {"name": "Water Slide", "cost": {"wood": 120, "water": 60}, "staff": 3, "guests": 28},
+	&"roller_coaster": {"name": "Roller Coaster", "cost": {"wood": 200}, "staff": 4, "guests": 40},
+}
+## Each tick, entertainment moves this fraction of the way to its current level,
+## so it doesn't flicker as staff come and go between shifts.
+const ENTERTAINMENT_EASE_DIVISOR := 10
+const ENTERTAINMENT_SCALE := 1000
 const POPULATION_INTERVAL := 5
 ## Every this many ticks, each villager eats 1 food and drinks 1 water.
 const MEAL_INTERVAL := 4
 ## Shortages never drive out the last few villagers, so a village can recover.
 const FOUNDERS := 4
-const PRODUCTS := ["wood", "food", "water", "training"]
+## Fun comes last: attractions are only staffed by villagers no other job needs.
+const PRODUCTS := ["wood", "food", "water", "training", "fun"]
+const FUN := "fun"
 ## Ticks a villager has to spend inside a training center to become a fighter.
 const TRAINING_TICKS := 45
 ## Towers reach a dragon this many cells away, and fighters reach FIGHTER_RANGE.
@@ -43,12 +63,14 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 9
+const SAVE_VERSION := 11
 ## The first save version that can have roads on water, which are bridges.
 const FIRST_BRIDGE_VERSION := 7
 const FIRST_HERO_VERSION := 8
 ## The first save version that can hold more than one hero.
 const FIRST_HERO_ROSTER_VERSION := 9
+## The first save version with playgrounds and their attractions.
+const FIRST_PLAYGROUND_VERSION := 11
 const ROAD_COST := 1
 const BRIDGE_COST := 5
 ## Wood gained from each forest cell cleared.
@@ -150,6 +172,11 @@ var _layout_version := 0
 var _jobs_need_update := true
 var _regions: Dictionary[Vector2i, int] = {}
 var _workers_at: Dictionary[Vector2i, int] = {}
+## The attractions under each playground entrance, in the order they were built.
+## They outlast an entrance the dragon burns, and reopen when it's rebuilt.
+var _attractions: Dictionary[Vector2i, Array] = {}
+## entertainment() in thousandths, eased toward the running attractions' share.
+var _entertainment := 0
 
 
 ## A negative new_dragon_seed picks a different dragon for each new game.
@@ -214,8 +241,8 @@ func filled_jobs() -> int:
 
 func total_jobs() -> int:
 	var total := 0
-	for type: StringName in _buildings.values():
-		total += BUILDINGS[type].get("jobs", 0)
+	for cell: Vector2i in _buildings:
+		total += _jobs_at(cell)
 	return total
 
 
@@ -224,7 +251,12 @@ func houses() -> Array[Vector2i]:
 
 
 func workplaces() -> Array[Vector2i]:
-	return _sorted_buildings(func(type: StringName) -> bool: return BUILDINGS[type].has("jobs"))
+	var cells: Array[Vector2i] = []
+	for cell: Vector2i in _buildings:
+		if _jobs_at(cell) > 0:
+			cells.append(cell)
+	cells.sort()
+	return cells
 
 
 func towers() -> Array[Vector2i]:
@@ -238,12 +270,14 @@ func housing() -> int:
 	return total
 
 
+## Attractions left under a burned entrance keep the cell for a new playground.
 func can_place(type: StringName, cell: Vector2i) -> bool:
 	return (
 		in_bounds(cell)
 		and terrain_at(cell) == Terrain.GRASS
 		and not _buildings.has(cell)
 		and not _roads.has(cell)
+		and (type == &"playground" or not _attractions.has(cell))
 		and wood >= BUILDINGS[type].cost
 	)
 
@@ -319,15 +353,187 @@ func demolish(cell: Vector2i) -> bool:
 		return true
 	var type := building_at(cell)
 	if type == &"":
-		return false
+		return _fill_in_attractions(cell)
 	_buildings.erase(cell)
 	# The refund also lets a player who spent all their wood recover.
 	wood += BUILDINGS[type].cost / 2
+	_refund_attractions(cell)
 	population = mini(population, housing())
 	_layout_changed(cell)
 	cell_changed.emit(cell)
 	stats_changed.emit()
 	return true
+
+
+# --- Playgrounds ---
+
+## How well the village is entertained, from 0 (not at all) to 1 (everyone).
+## It's the share of villagers the running attractions have room for: each
+## attraction entertains its "guests" in proportion to how many of its staff are
+## working inside right now. It eases toward that share a little each tick, so
+## it doesn't jump as staff change shifts. Meant to feed the village's happiness,
+## for example happiness += ENTERTAINMENT_WEIGHT * entertainment().
+func entertainment() -> float:
+	return float(_entertainment) / ENTERTAINMENT_SCALE
+
+
+func is_playground(cell: Vector2i) -> bool:
+	return _buildings.has(cell) and BUILDINGS[_buildings[cell]].has(FUN)
+
+
+## The attractions under this cell in the order they were built, whether its
+## entrance is standing or burned down.
+func attractions_at(cell: Vector2i) -> Array[StringName]:
+	var built: Array[StringName] = []
+	built.assign(_attractions.get(cell, []))
+	return built
+
+
+## Attractions whose entrance is gone, waiting for a playground to be rebuilt.
+func has_buried_attractions(cell: Vector2i) -> bool:
+	return _attractions.has(cell) and not is_playground(cell)
+
+
+func attraction_count() -> int:
+	var count := 0
+	for cell: Vector2i in _attractions:
+		if is_playground(cell):
+			count += _attractions[cell].size()
+	return count
+
+
+func can_afford_attraction(type: StringName) -> bool:
+	if not ATTRACTIONS.has(type):
+		return false
+	var cost: Dictionary = ATTRACTIONS[type].cost
+	return wood >= cost.get("wood", 0) and water >= cost.get("water", 0)
+
+
+func can_build_attraction(cell: Vector2i, type: StringName) -> bool:
+	return is_playground(cell) and not type in attractions_at(cell) and can_afford_attraction(type)
+
+
+func build_attraction(cell: Vector2i, type: StringName) -> bool:
+	if not can_build_attraction(cell, type):
+		return false
+	var cost: Dictionary = ATTRACTIONS[type].cost
+	wood -= cost.get("wood", 0)
+	water -= cost.get("water", 0)
+	if not _attractions.has(cell):
+		_attractions[cell] = []
+	_attractions[cell].append(type)
+	_jobs_need_update = true
+	cell_changed.emit(cell)
+	stats_changed.emit()
+	return true
+
+
+## Staff hired for each attraction here (x), and how many of them are working
+## inside right now (y). Staff fill attractions in the order they were built.
+func attraction_staff(cell: Vector2i) -> Dictionary[StringName, Vector2i]:
+	var staff: Dictionary[StringName, Vector2i] = {}
+	if not is_playground(cell):
+		return staff
+	var hired := workers_at(cell)
+	var inside := _working_inside(cell)
+	for type in attractions_at(cell):
+		var needed: int = ATTRACTIONS[type].staff
+		var type_hired := mini(hired, needed)
+		var type_inside := mini(inside, needed)
+		staff[type] = Vector2i(type_hired, type_inside)
+		hired -= type_hired
+		inside -= type_inside
+	return staff
+
+
+func _working_inside(cell: Vector2i) -> int:
+	var count := 0
+	for villager in villagers:
+		if villager.job == cell and villager.state == Villager.State.WORKING:
+			count += 1
+	return count
+
+
+## Guests all running attractions have room for right now, in thousandths.
+func _entertainment_room() -> int:
+	var room := 0
+	for cell: Vector2i in _attractions:
+		var staff := attraction_staff(cell)
+		for type: StringName in staff:
+			var attraction: Dictionary = ATTRACTIONS[type]
+			room += attraction.guests * staff[type].y * ENTERTAINMENT_SCALE / attraction.staff
+	return room
+
+
+func _ease_entertainment() -> void:
+	var target := 0
+	if population > 0:
+		target = mini(_entertainment_room() / population, ENTERTAINMENT_SCALE)
+	var gap := target - _entertainment
+	var step := gap / ENTERTAINMENT_EASE_DIVISOR
+	_entertainment += step if step != 0 else signi(gap)
+
+
+## Demolishing an entrance gives back half of what its attractions cost, like
+## any building, and they're gone for good.
+func _refund_attractions(cell: Vector2i) -> void:
+	for type: StringName in _attractions.get(cell, []):
+		var cost: Dictionary = ATTRACTIONS[type].cost
+		wood += cost.get("wood", 0) / 2
+		water += cost.get("water", 0) / 2
+	_attractions.erase(cell)
+
+
+## Demolishing the ground over a burned entrance fills in its attractions.
+func _fill_in_attractions(cell: Vector2i) -> bool:
+	if not _attractions.has(cell):
+		return false
+	_refund_attractions(cell)
+	cell_changed.emit(cell)
+	stats_changed.emit()
+	return true
+
+
+func _jobs_at(cell: Vector2i) -> int:
+	if not _buildings.has(cell):
+		return 0
+	if not is_playground(cell):
+		return BUILDINGS[_buildings[cell]].get("jobs", 0)
+	var staff := 0
+	for type: StringName in _attractions.get(cell, []):
+		staff += ATTRACTIONS[type].staff
+	return staff
+
+
+func _load_attractions(data: Dictionary) -> bool:
+	if not data.get("attractions") is Array:
+		return false
+	_entertainment = _whole_number(data, "entertainment")
+	if _entertainment < 0 or _entertainment > ENTERTAINMENT_SCALE:
+		return false
+	for entry: Variant in data.attractions:
+		if not entry is Dictionary or not entry.get("types") is Array or entry.types.is_empty():
+			return false
+		var cell := Vector2i(_whole_number(entry, "x"), _whole_number(entry, "y"))
+		if not in_bounds(cell) or _attractions.has(cell) or (_buildings.has(cell) and not is_playground(cell)):
+			return false
+		var built: Array[StringName] = []
+		for type: Variant in entry.types:
+			if not type is String or not ATTRACTIONS.has(StringName(type)) or StringName(type) in built:
+				return false
+			built.append(StringName(type))
+		_attractions[cell] = built
+	return true
+
+
+func _save_attractions() -> Array[Dictionary]:
+	var saved: Array[Dictionary] = []
+	for cell: Vector2i in _attractions:
+		var types: Array[String] = []
+		for type: StringName in _attractions[cell]:
+			types.append(String(type))
+		saved.append({"x": cell.x, "y": cell.y, "types": types})
+	return saved
 
 
 func tick() -> void:
@@ -347,6 +553,7 @@ func tick() -> void:
 					_jobs_need_update = true
 	for index in range(villagers.size()):
 		_advance_villager(villagers[index], index)
+	_ease_entertainment()
 
 	if tick_count % MEAL_INTERVAL == 0:
 		food = maxi(food - population, 0)
@@ -413,6 +620,8 @@ func to_save_data() -> Dictionary:
 		"dragon_previous_y": dragon_previous_target.y,
 		"dragon_slain": dragon_slain,
 		"heroes": heroes.map(func(hero: Hero) -> Dictionary: return hero.to_data()),
+		"attractions": _save_attractions(),
+		"entertainment": _entertainment,
 	}
 
 
@@ -467,6 +676,8 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 	if version >= 4 and not sim._load_villagers(data, version):
 		return null
 	if version >= FIRST_HERO_VERSION and not sim._load_heroes(data, version):
+		return null
+	if version >= FIRST_PLAYGROUND_VERSION and not sim._load_attractions(data):
 		return null
 	if version < 5:
 		sim.water = sim.population * OLD_SAVE_WATER_TICKS / MEAL_INTERVAL
@@ -1225,35 +1436,57 @@ func _assign_jobs() -> void:
 			_is_workplace(villager.job)
 			and _can_take(villager, villager.job)
 			and _can_commute(villager.home, villager.job)
-			and _workers_at.get(villager.job, 0) < BUILDINGS[_buildings[villager.job]].jobs
+			and _workers_at.get(villager.job, 0) < _jobs_at(villager.job)
 		):
 			_workers_at[villager.job] = _workers_at.get(villager.job, 0) + 1
 		else:
 			villager.job = Villager.NO_CELL
 	var all_workplaces := workplaces()
+	var needed: Array[Vector2i] = all_workplaces.filter(func(cell: Vector2i) -> bool: return _product_of(cell) != FUN)
+	var playgrounds: Array[Vector2i] = all_workplaces.filter(func(cell: Vector2i) -> bool: return _product_of(cell) == FUN)
 	var workers_making: Dictionary[String, int] = {}
 	for cell: Vector2i in _workers_at:
 		var product := _product_of(cell)
 		workers_making[product] = workers_making.get(product, 0) + _workers_at[cell]
 	for villager in villagers:
-		if villager.job != Villager.NO_CELL or villager.home == Villager.NO_CELL:
-			continue
-		# Fill whichever product has the fewest workers, then the nearest job for it.
-		var best := Villager.NO_CELL
-		for workplace in all_workplaces:
-			if _workers_at.get(workplace, 0) >= BUILDINGS[_buildings[workplace]].jobs:
-				continue
-			if not _can_commute(villager.home, workplace) or not _can_take(villager, workplace):
-				continue
-			if best == Villager.NO_CELL or _better_job(workplace, best, villager.home, workers_making):
-				best = workplace
-		if best != Villager.NO_CELL:
-			villager.job = best
-			_workers_at[best] = _workers_at.get(best, 0) + 1
-			var product := _product_of(best)
-			workers_making[product] = workers_making.get(product, 0) + 1
-	_rebalance_jobs(all_workplaces, workers_making)
+		if villager.job == Villager.NO_CELL and villager.home != Villager.NO_CELL:
+			_take_best_job(villager, needed, workers_making)
+	# Attraction staff leave for any open job the village needs more.
+	for index in range(villagers.size() - 1, -1, -1):
+		var villager := villagers[index]
+		if villager.job != Villager.NO_CELL and _product_of(villager.job) == FUN:
+			_take_best_job(villager, needed, workers_making)
+	_rebalance_jobs(needed, workers_making)
+	for villager in villagers:
+		if villager.job == Villager.NO_CELL and villager.home != Villager.NO_CELL:
+			_take_best_job(villager, playgrounds, workers_making)
 	_swap_fighters_out_of_training(all_workplaces)
+
+
+## Moves the villager to the best open job among these workplaces, leaving any
+## job they had: whichever product has the fewest workers, then the nearest job
+## for it. Returns false, changing nothing, if none can be had.
+func _take_best_job(villager: Villager, choices: Array[Vector2i], workers_making: Dictionary[String, int]) -> bool:
+	var best := Villager.NO_CELL
+	for workplace in choices:
+		if _workers_at.get(workplace, 0) >= _jobs_at(workplace):
+			continue
+		if not _can_commute(villager.home, workplace) or not _can_take(villager, workplace):
+			continue
+		if best == Villager.NO_CELL or _better_job(workplace, best, villager.home, workers_making):
+			best = workplace
+	if best == Villager.NO_CELL:
+		return false
+	if villager.job != Villager.NO_CELL:
+		_workers_at[villager.job] -= 1
+		if _workers_at[villager.job] == 0:
+			_workers_at.erase(villager.job)
+		workers_making[_product_of(villager.job)] -= 1
+	villager.job = best
+	_workers_at[best] = _workers_at.get(best, 0) + 1
+	var product := _product_of(best)
+	workers_making[product] = workers_making.get(product, 0) + 1
+	return true
 
 
 ## Moves workers from the busiest product to the one with fewest workers until
@@ -1289,7 +1522,7 @@ func _move_a_worker(
 		for workplace in all_workplaces:
 			if (
 				_product_of(workplace) == to_product
-				and _workers_at.get(workplace, 0) < BUILDINGS[_buildings[workplace]].jobs
+				and _workers_at.get(workplace, 0) < _jobs_at(workplace)
 				and _can_commute(villager.home, workplace)
 				and _can_take(villager, workplace)
 				and (best == Villager.NO_CELL or _distance(workplace, villager.home) < _distance(best, villager.home))
@@ -1315,7 +1548,7 @@ func _swap_fighters_out_of_training(all_workplaces: Array[Vector2i]) -> void:
 		if fighter.job != Villager.NO_CELL or fighter.home == Villager.NO_CELL or not is_fighter(fighter):
 			continue
 		for center in all_workplaces:
-			if _product_of(center) != "training" or _workers_at.get(center, 0) >= BUILDINGS[_buildings[center]].jobs:
+			if _product_of(center) != "training" or _workers_at.get(center, 0) >= _jobs_at(center):
 				continue
 			var trainee := _untrained_worker_for(fighter, center)
 			if trainee == null:
@@ -1364,7 +1597,7 @@ func _is_house(cell: Vector2i) -> bool:
 
 
 func _is_workplace(cell: Vector2i) -> bool:
-	return _buildings.has(cell) and BUILDINGS[_buildings[cell]].has("jobs")
+	return _jobs_at(cell) > 0
 
 
 func _distance(a: Vector2i, b: Vector2i) -> int:

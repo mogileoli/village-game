@@ -21,13 +21,26 @@ const SIDES := [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 const DIAGONALS := [Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1)]
 const BUILDING_ATLAS := {
 	&"house": 0, &"farm": 1, &"lumber_camp": 2, &"well": 3, &"tower": 4, &"training_center": 5,
+	&"playground": 7,
 }
+const ATTRACTION_ICONS := preload("res://assets/ui/attractions.png")
+## The boarded-up hatch after the attraction icons, for a burned entrance.
+const BURIED_ICON_COLUMN := 6
+const ATTRACTION_ICON_SIZE := 16
+## Where an entrance's attraction count sits: on its sign, above the cell.
+const BADGE_OFFSET := Vector2(-3, -26)
+const BURIED_BADGE_OFFSET := Vector2(-3, -6)
+const BADGE_COLOR := Color.WHITE
+const BURIED_BADGE_COLOR := Color(0.75, 0.75, 0.8)
 const RANGE_RING_POINTS := 48
 const VALID_COLOR := Color.WHITE
 const INVALID_COLOR := Color(1, 0.25, 0.2)
 
 var _sim: VillageSim
 var _building_source := -1
+## Attraction counts shown on playground entrances and on burned ones' hatches.
+var _badges: Dictionary[Vector2i, Node2D] = {}
+var _badge_layer := Node2D.new()
 
 @onready var _terrain: TileMapLayer = $Terrain
 @onready var _shore: TileMapLayer = $Shore
@@ -49,6 +62,8 @@ func _ready() -> void:
 	var building_tiles := _make_building_tileset()
 	_buildings.tile_set = building_tiles
 	_preview.tile_set = building_tiles
+	_badge_layer.z_index = 1
+	add_child(_badge_layer)
 
 
 func bind(sim: VillageSim) -> void:
@@ -60,6 +75,9 @@ func bind(sim: VillageSim) -> void:
 	_scorch.clear()
 	_roads.clear()
 	_buildings.clear()
+	for badge: Node2D in _badges.values():
+		badge.queue_free()
+	_badges.clear()
 	for y in range(_sim.height):
 		for x in range(_sim.width):
 			_on_cell_changed(Vector2i(x, y))
@@ -206,6 +224,35 @@ func _on_cell_changed(cell: Vector2i) -> void:
 		_buildings.erase_cell(cell)
 	else:
 		_buildings.set_cell(cell, _building_source, Vector2i(BUILDING_ATLAS[type], 0))
+	_draw_badge(cell)
+
+
+## Numbers a playground's attractions on its sign. Attractions left by a burned
+## entrance show as a boarded-up hatch with their number.
+func _draw_badge(cell: Vector2i) -> void:
+	if _badges.has(cell):
+		_badges[cell].queue_free()
+		_badges.erase(cell)
+	var count := _sim.attractions_at(cell).size()
+	var buried := _sim.has_buried_attractions(cell)
+	if count == 0 or not (buried or _sim.is_playground(cell)):
+		return
+	var badge := Node2D.new()
+	badge.position = _terrain.map_to_local(cell)
+	if buried:
+		var hatch := Sprite2D.new()
+		var region := AtlasTexture.new()
+		region.atlas = ATTRACTION_ICONS
+		region.region = Rect2(BURIED_ICON_COLUMN * ATTRACTION_ICON_SIZE, 0, ATTRACTION_ICON_SIZE, ATTRACTION_ICON_SIZE)
+		hatch.texture = region
+		badge.add_child(hatch)
+	var label := Label.new()
+	label.text = str(count)
+	label.position = BURIED_BADGE_OFFSET if buried else BADGE_OFFSET
+	label.add_theme_color_override("font_color", BURIED_BADGE_COLOR if buried else BADGE_COLOR)
+	badge.add_child(label)
+	_badge_layer.add_child(badge)
+	_badges[cell] = badge
 
 
 func _make_tileset() -> TileSet:
