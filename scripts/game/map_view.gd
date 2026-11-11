@@ -21,6 +21,7 @@ const SIDES := [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 const DIAGONALS := [Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1)]
 const BUILDING_ATLAS := {
 	&"house": 0, &"farm": 1, &"lumber_camp": 2, &"well": 3, &"tower": 4, &"training_center": 5,
+	&"docks": 6,
 }
 const RANGE_RING_POINTS := 48
 const VALID_COLOR := Color.WHITE

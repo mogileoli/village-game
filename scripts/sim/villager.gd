@@ -20,6 +20,10 @@ var to_building := NO_CELL
 var layout_version := 0
 ## Ticks spent inside a training center. VillageSim.TRAINING_TICKS makes a fighter.
 var training := 0
+## Fish in the boat on a docks shift, landed as food when the shift ends.
+var fish := 0
+## Ticks worked so far this shift. Docks use it to time the boat's trip.
+var shift_ticks := 0
 
 
 ## Multiplies walking pace.
@@ -46,4 +50,6 @@ func to_data() -> Dictionary:
 		"from_building": [from_building.x, from_building.y],
 		"to_building": [to_building.x, to_building.y],
 		"training": training,
+		"fish": fish,
+		"shift_ticks": shift_ticks,
 	}

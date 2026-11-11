@@ -118,6 +118,7 @@ func _init() -> void:
 	_save_dragon()
 	_save_roads()
 	_save_bridges()
+	_save_boats()
 	_save_villagers()
 	_save_hero()
 	_save_hero_shots()
@@ -488,14 +489,55 @@ func _training_center(image: Image, x0: int) -> void:
 	_outline(image, x0, CELL)
 
 
+## A plank pier standing on posts in the water. The gaps between planks are
+## left see-through so the water tile below shows. Only the bottom CELL rows
+## are its own cell; posts and a crate rise a little above it.
+func _docks(image: Image, x0: int) -> void:
+	# Posts standing in the water, with a ripple where they meet it.
+	for x: int in [2, 14, 26]:
+		_rect(image, x0 + x - 1, 44, 6, 1, W_FOAM)
+		_rect(image, x0 + x, 40, 4, 4, INK)
+		_rect(image, x0 + x + 1, 40, 2, 4, WOOD_DARK)
+		_dot(image, x0 + x + 1, 42, WOOD_MID)
+	# Planks running out over the water, with ragged ends and gaps between.
+	for plank in range(6):
+		var left := x0 + 1 + plank * 5
+		var top := 19 + plank % 2
+		var bottom := 40 - (plank + 1) % 2 * 2
+		_rect(image, left, top - 1, 5, bottom - top + 2, INK)
+		_rect(image, left + 1, top, 3, bottom - top, WOOD_MID if plank % 3 == 1 else WOOD_LIGHT)
+		_rect(image, left + 1, bottom - 1, 3, 1, WOOD_DARK)
+		_dot(image, left + 2, top + 1, WOOD_END)
+		_dot(image, left + 2, bottom - 3, WOOD_END)
+	# A beam across the front, holding the planks together.
+	_rect(image, x0, 36, 32, 4, INK)
+	_rect(image, x0 + 1, 37, 30, 2, WOOD_DARK)
+	_rect(image, x0 + 1, 37, 30, 1, WOOD_MID)
+	# Mooring posts on the back corners, one with a coil of rope.
+	for x: int in [1, 27]:
+		_rect(image, x0 + x, 12, 4, 10, INK)
+		_rect(image, x0 + x + 1, 13, 2, 8, WOOD_MID)
+		_rect(image, x0 + x + 1, 13, 2, 1, WOOD_END)
+	_rect(image, x0 + 27, 16, 4, 2, WHEAT_DARK)
+	# A crate of fish.
+	_rect(image, x0 + 15, 20, 11, 9, INK)
+	_rect(image, x0 + 16, 21, 9, 7, WOOD_DARK)
+	_rect(image, x0 + 17, 22, 7, 4, STONE_DARK)
+	for fish: Vector2i in [Vector2i(17, 22), Vector2i(19, 24), Vector2i(18, 23)]:
+		_rect(image, x0 + fish.x, fish.y, 4, 1, STONE_LIGHT)
+		_dot(image, x0 + fish.x + 4, fish.y, STONE_MID)
+	_rect(image, x0 + 16, 26, 9, 1, WOOD_LIGHT)
+
+
 func _save_buildings() -> void:
-	var image := _new_image(CELL * 6, BUILDING_H)
+	var image := _new_image(CELL * 7, BUILDING_H)
 	_house(image, 0)
 	_farm(image, CELL)
 	_lumber_camp(image, CELL * 2)
 	_well(image, CELL * 3)
 	_tower(image, CELL * 4)
 	_training_center(image, CELL * 5)
+	_docks(image, CELL * 6)
 	image.save_png("res://assets/tiles/buildings.png")
 
 
@@ -759,6 +801,75 @@ func _save_bridges() -> void:
 				else:
 					image.set_pixel(x0 + x, y, _plank_color(x, y, joined))
 	image.save_png("res://assets/tiles/bridges.png")
+
+
+# --- Boats ---
+
+const BOAT := 16
+## Boat sheet columns: across, across with a stroke of the oars, up and down,
+## up and down with a stroke. Rows: empty, someone rowing, someone fishing.
+const BOAT_COLUMNS := 4
+const BOAT_ROWS := 3
+
+
+func _line(image: Image, from: Vector2i, to: Vector2i, color: Color) -> void:
+	var steps := maxi(absi(to.x - from.x), absi(to.y - from.y))
+	for step in range(steps + 1):
+		var point := Vector2(from).lerp(Vector2(to), float(step) / maxi(steps, 1)).round()
+		_dot(image, int(point.x), int(point.y), color)
+
+
+func _boat_frame(across: bool, stroke: int, rider: int) -> Image:
+	var image := _new_image(BOAT, BOAT)
+	var center := Vector2(7.5, 9.0) if across else Vector2(7.5, 8.0)
+	var radius := Vector2(7.0, 3.5) if across else Vector2(3.5, 7.0)
+	_ellipse(image, center.x, center.y, radius.x, radius.y, WOOD_DARK)
+	_ellipse(image, center.x, center.y - 0.5, radius.x - 0.5, radius.y - 0.5, WOOD_MID)
+	_ellipse(image, center.x, center.y - 0.5, radius.x - 2.0, radius.y - 2.0, WOOD_DARK)
+	var bench := Vector2i(center.round())
+	if across:
+		_rect(image, bench.x - 1, bench.y - 2, 2, 4, WOOD_LIGHT)
+	else:
+		_rect(image, bench.x - 2, bench.y - 1, 4, 2, WOOD_LIGHT)
+	if rider == 1:
+		# Oars out to both sides, swept back and forth.
+		var sweep := 2 if stroke else -2
+		if across:
+			_line(image, bench + Vector2i(0, -2), bench + Vector2i(sweep, -7), WOOD_END)
+			_line(image, bench + Vector2i(0, 2), bench + Vector2i(sweep, 6), WOOD_END)
+		else:
+			_line(image, bench + Vector2i(-2, 0), bench + Vector2i(-7, sweep), WOOD_END)
+			_line(image, bench + Vector2i(2, 0), bench + Vector2i(7, sweep), WOOD_END)
+	if rider > 0:
+		# Someone sitting on the bench, seen from above.
+		_rect(image, bench.x - 2, bench.y - 2, 4, 3, TUNIC)
+		_rect(image, bench.x - 2, bench.y - 5, 4, 4, SKIN)
+		_rect(image, bench.x - 2, bench.y - 5, 4, 2, WOOD_DARK)
+	if rider == 2:
+		# A rod held out over the side, its line bobbing.
+		var tip := Vector2i(15, 1) if across else Vector2i(14, 2)
+		_line(image, bench + Vector2i(1, -3), tip, WOOD_DARK)
+		_line(image, tip, tip + Vector2i(0, 4 + stroke), W_FOAM)
+		_dot(image, tip.x, tip.y + 5 + stroke, ROOF_MID)
+	_outline(image, 0, BOAT)
+	# The boat's shadow on the water, only where nothing else is drawn.
+	var shadow := _new_image(BOAT, BOAT)
+	_ellipse(shadow, center.x, center.y + 2.0, radius.x, radius.y, W_DEEP)
+	for y in range(BOAT):
+		for x in range(BOAT):
+			if image.get_pixel(x, y).a == 0.0 and shadow.get_pixel(x, y).a > 0.0:
+				image.set_pixel(x, y, W_DEEP)
+	return image
+
+
+## Rowing boats for the docks, in a sheet of their own.
+func _save_boats() -> void:
+	var image := _new_image(BOAT * BOAT_COLUMNS, BOAT * BOAT_ROWS)
+	for rider in range(BOAT_ROWS):
+		for column in range(BOAT_COLUMNS):
+			var frame := _boat_frame(column < 2, column % 2, rider)
+			image.blit_rect(frame, Rect2i(0, 0, BOAT, BOAT), Vector2i(column * BOAT, rider * BOAT))
+	image.save_png("res://assets/tiles/boats.png")
 
 
 # --- Villagers ---

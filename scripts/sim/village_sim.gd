@@ -24,6 +24,9 @@ const BUILDINGS := {
 	&"well": {"name": "Well", "cost": 15, "water": 3, "jobs": 2},
 	&"tower": {"name": "Tower", "cost": 40, "defense": true},
 	&"training_center": {"name": "Training Center", "label": "Training", "cost": 30, "training": 1, "jobs": 2},
+	# Docks make food through fishing trips (see _fish), not every tick, so the
+	# 0 here only marks food as what they produce.
+	&"docks": {"name": "Docks", "cost": 20, "food": 0, "jobs": 2, "on_water": true, "fishing": true},
 }
 const POPULATION_INTERVAL := 5
 ## Every this many ticks, each villager eats 1 food and drinks 1 water.
@@ -43,12 +46,14 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 9
+const SAVE_VERSION := 10
 ## The first save version that can have roads on water, which are bridges.
 const FIRST_BRIDGE_VERSION := 7
 const FIRST_HERO_VERSION := 8
 ## The first save version that can hold more than one hero.
 const FIRST_HERO_ROSTER_VERSION := 9
+## The first save version with docks, and with villagers' catches of fish.
+const FIRST_DOCKS_VERSION := 10
 const ROAD_COST := 1
 const BRIDGE_COST := 5
 ## Wood gained from each forest cell cleared.
@@ -65,6 +70,18 @@ const RETRY_TICKS := 2
 const WANDER_RADIUS := 5
 const NEAREST_CELL_SEARCH := 8
 const DOOR_ORDER := [Vector2i.DOWN, Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP]
+## A fishing shift at the docks: the boat rows out for this many ticks, fishes,
+## then rows back for this many ticks before the shift ends.
+const BOAT_ROW_TICKS := 2
+## How many cells of water a boat may row out from its dock to find fish.
+const FISHING_RANGE := 4
+## Fish caught each tick at the fishing spot: this, plus one for each open
+## water cell around the spot, so open water out from the shore is richer.
+const FISH_BASE_CATCH := 18
+## Fish it takes to make one food. An average 12 tick shift has 8 ticks of
+## fishing, so open water gives 26 food a shift, a narrow river 20 and a farm
+## worker 24.
+const FISH_PER_FOOD := 8
 const INVALID_CELL := Vector2i(-2, -2)
 ## One building is under 10% of the village only once there are at least 11,
 ## so a dragon's timer doesn't run until then.
@@ -150,6 +167,9 @@ var _layout_version := 0
 var _jobs_need_update := true
 var _regions: Dictionary[Vector2i, int] = {}
 var _workers_at: Dictionary[Vector2i, int] = {}
+## Each dock's boat route, worked out again when the layout changes.
+var _fishing_routes: Dictionary[Vector2i, Array] = {}
+var _fishing_routes_version := -1
 
 
 ## A negative new_dragon_seed picks a different dragon for each new game.
@@ -241,11 +261,25 @@ func housing() -> int:
 func can_place(type: StringName, cell: Vector2i) -> bool:
 	return (
 		in_bounds(cell)
-		and terrain_at(cell) == Terrain.GRASS
+		and terrain_at(cell) == _terrain_for(type)
 		and not _buildings.has(cell)
 		and not _roads.has(cell)
 		and wood >= BUILDINGS[type].cost
+		and (not BUILDINGS[type].has("on_water") or _touches_ground(cell))
 	)
+
+
+## Docks go on water; everything else on grass.
+static func _terrain_for(type: StringName) -> Terrain:
+	return Terrain.WATER if BUILDINGS[type].has("on_water") else Terrain.GRASS
+
+
+## Whether people can step onto this water cell from ground beside it.
+func _touches_ground(cell: Vector2i) -> bool:
+	for side: Vector2i in DOOR_ORDER:
+		if is_walkable(cell + side):
+			return true
+	return false
 
 
 func place(type: StringName, cell: Vector2i) -> bool:
@@ -277,7 +311,13 @@ func place_road(cell: Vector2i) -> bool:
 
 
 func can_place_bridge(cell: Vector2i) -> bool:
-	return in_bounds(cell) and terrain_at(cell) == Terrain.WATER and not _roads.has(cell) and wood >= BRIDGE_COST
+	return (
+		in_bounds(cell)
+		and terrain_at(cell) == Terrain.WATER
+		and not _roads.has(cell)
+		and not _buildings.has(cell)
+		and wood >= BRIDGE_COST
+	)
 
 
 func place_bridge(cell: Vector2i) -> bool:
@@ -337,6 +377,8 @@ func tick() -> void:
 	for villager in villagers:
 		if villager.state == Villager.State.WORKING:
 			var workplace: Dictionary = BUILDINGS[_buildings[villager.job]]
+			if workplace.has("fishing"):
+				_fish(villager)
 			wood += workplace.get("wood", 0)
 			food += workplace.get("food", 0)
 			water += workplace.get("water", 0)
@@ -450,7 +492,8 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 		if (
 			not BUILDINGS.has(type)
 			or not sim.in_bounds(cell)
-			or sim.terrain_at(cell) != Terrain.GRASS
+			or sim.terrain_at(cell) != _terrain_for(type)
+			or (BUILDINGS[type].has("on_water") and version < FIRST_DOCKS_VERSION)
 			or sim._buildings.has(cell)
 		):
 			return null
@@ -498,6 +541,11 @@ func _read_villager(entry: Variant, version: int, into: Villager = null) -> Vill
 	villager.training = _whole_number(entry, "training") if version >= 6 else 0
 	if villager.training < 0:
 		return null
+	if version >= FIRST_DOCKS_VERSION:
+		villager.fish = _whole_number(entry, "fish")
+		villager.shift_ticks = _whole_number(entry, "shift_ticks")
+		if villager.fish < 0 or villager.shift_ticks < 0:
+			return null
 	if state < 0 or state >= Villager.State.size() or villager.timer < 0:
 		return null
 	villager.state = state as Villager.State
@@ -1102,6 +1150,97 @@ func _read_hero(entry: Variant, version: int) -> Hero:
 	return loaded
 
 
+# --- Fishing ---
+
+## The water cells a dock's boats row through, from the dock itself out to the
+## best fishing spot in range. Just the dock if there's no open water beside it.
+func fishing_route(dock: Vector2i) -> Array[Vector2i]:
+	if _fishing_routes_version != _layout_version:
+		_fishing_routes.clear()
+		_fishing_routes_version = _layout_version
+	if not _fishing_routes.has(dock):
+		_fishing_routes[dock] = _find_fishing_route(dock)
+	var route: Array[Vector2i] = []
+	route.assign(_fishing_routes[dock])
+	return route
+
+
+## Boats travel on open water only: not under bridges or through other docks.
+func is_boatable(cell: Vector2i) -> bool:
+	return in_bounds(cell) and terrain_at(cell) == Terrain.WATER and not _roads.has(cell) and not _buildings.has(cell)
+
+
+## Fish caught each tick spent at a dock's fishing spot.
+func fish_per_tick(dock: Vector2i) -> int:
+	var spot: Vector2i = fishing_route(dock)[-1]
+	return FISH_BASE_CATCH + _open_water_around(spot)
+
+
+## Whether this villager's boat is out at the fishing spot, rather than rowing.
+func is_fishing(villager: Villager) -> bool:
+	return (
+		villager.state == Villager.State.WORKING
+		and villager.shift_ticks >= BOAT_ROW_TICKS
+		and villager.timer > BOAT_ROW_TICKS
+	)
+
+
+func _fish(villager: Villager) -> void:
+	if is_fishing(villager):
+		villager.fish += fish_per_tick(villager.job)
+	villager.shift_ticks += 1
+
+
+## Brings the boat's catch ashore as food, at the end of a shift.
+func _land_catch(villager: Villager) -> void:
+	food += (villager.fish + FISH_PER_FOOD / 2) / FISH_PER_FOOD
+	_lose_catch(villager)
+
+
+## A shift that starts over, or is cut short, starts with an empty boat.
+func _lose_catch(villager: Villager) -> void:
+	villager.fish = 0
+	villager.shift_ticks = 0
+
+
+## Searches outward over open water for the spot with the most open water
+## around it, preferring spots farther out, and returns the way there.
+func _find_fishing_route(dock: Vector2i) -> Array[Vector2i]:
+	var came_from: Dictionary[Vector2i, Vector2i] = {dock: dock}
+	var steps: Dictionary[Vector2i, int] = {dock: 0}
+	var pending: Array[Vector2i] = [dock]
+	var best := dock
+	var best_score := -1
+	while not pending.is_empty():
+		var cell: Vector2i = pending.pop_front()
+		if cell != dock:
+			var score := _open_water_around(cell) * (FISHING_RANGE + 1) + steps[cell]
+			if score > best_score:
+				best = cell
+				best_score = score
+		if steps[cell] == FISHING_RANGE:
+			continue
+		for side: Vector2i in DOOR_ORDER:
+			var next: Vector2i = cell + side
+			if not came_from.has(next) and is_boatable(next):
+				came_from[next] = cell
+				steps[next] = steps[cell] + 1
+				pending.append(next)
+	var route: Array[Vector2i] = [best]
+	while route[0] != dock:
+		route.push_front(came_from[route[0]])
+	return route
+
+
+func _open_water_around(spot: Vector2i) -> int:
+	var count := 0
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			if (x != 0 or y != 0) and is_boatable(spot + Vector2i(x, y)):
+				count += 1
+	return count
+
+
 # --- Villagers ---
 
 func _rebuild_grid() -> void:
@@ -1161,6 +1300,7 @@ func _update_jobs() -> void:
 		if moved.state == Villager.State.WORKING and moved.job != previous_jobs[index]:
 			moved.state = Villager.State.OUTSIDE
 			moved.timer = RETRY_TICKS
+			_lose_catch(moved)
 	for villager in villagers:
 		if villager.cell == Villager.NO_CELL:
 			var door := _door_of(villager.home, -1)
@@ -1171,6 +1311,7 @@ func _update_jobs() -> void:
 		elif villager.state == Villager.State.WORKING and villager.job == Villager.NO_CELL:
 			villager.state = Villager.State.OUTSIDE
 			villager.timer = RETRY_TICKS
+			_lose_catch(villager)
 
 
 ## Labels each connected stretch of walkable ground, to tell what can be reached.
@@ -1449,6 +1590,8 @@ func _route(villager: Villager, from_building: Vector2i, to_building: Vector2i, 
 	var path := _grid.get_id_path(villager.cell, goal)
 	if path.is_empty():
 		return false
+	if from_building != Villager.NO_CELL and from_building == villager.job:
+		_land_catch(villager)
 	villager.path = path
 	villager.from_building = from_building
 	villager.to_building = to_building
@@ -1487,6 +1630,7 @@ func _arrive(villager: Villager, index: int) -> void:
 	if building != Villager.NO_CELL and building == villager.job:
 		villager.state = Villager.State.WORKING
 		villager.timer = _roll(index, WORK_TICKS)
+		_lose_catch(villager)
 	elif building != Villager.NO_CELL and building == villager.home:
 		villager.state = Villager.State.AT_HOME
 		villager.timer = _roll(index, HOME_TICKS)
