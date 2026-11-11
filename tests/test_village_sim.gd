@@ -95,6 +95,14 @@ func _init() -> void:
 	_test_happiness_changes_growth()
 	_test_happiness_survives_save_and_load()
 	_test_older_saves_get_happiness()
+	_test_building_attractions()
+	_test_staff_run_attractions()
+	_test_entertainment_value()
+	_test_fun_jobs_come_after_food_and_water()
+	_test_dragon_buries_attractions()
+	_test_demolishing_a_playground()
+	_test_playgrounds_save_and_load()
+	_test_older_saves_have_no_playgrounds()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -1999,3 +2007,258 @@ func _test_older_saves_get_happiness() -> void:
 		_check(gap <= 0.5 / Happiness.STEPS_PER_POINT, "it starts as happy as it should be: %f" % gap)
 		_check(loaded.happiness.value < Happiness.START_VALUE, "a hungry, jobless village starts unhappy: %f" % loaded.happiness.value)
 		_check(loaded.happiness.dragon_fear == 0, "with no fear")
+
+
+# --- Playgrounds ---
+
+const PLAYGROUND := Vector2i(24, 20)
+
+
+func _test_building_attractions() -> void:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.wood = 100
+	sim.water = 0
+	_check(not sim.build_attraction(PLAYGROUND, &"darts"), "no attractions without an entrance")
+	_check(sim.place(&"playground", PLAYGROUND), "a playground entrance goes on grass")
+	_check(sim.wood == 75, "the entrance costs 25 wood")
+	_check(sim.total_jobs() == 0 and sim.workplaces().is_empty(), "an empty playground has no jobs")
+	_check(sim.build_attraction(PLAYGROUND, &"darts"), "darts can be built")
+	_check(sim.wood == 55, "darts cost 20 wood: %d" % sim.wood)
+	_check(not sim.can_build_attraction(PLAYGROUND, &"darts"), "only one darts per entrance")
+	_check(not sim.build_attraction(PLAYGROUND, &"darts") and sim.wood == 55, "a second darts costs nothing")
+	_check(not sim.build_attraction(PLAYGROUND, &"roller_coaster"), "a roller coaster costs too much")
+	_check(not sim.build_attraction(PLAYGROUND, &"rocket"), "unknown attractions can't be built")
+	sim.wood = 1000
+	_check(not sim.build_attraction(PLAYGROUND, &"water_slide"), "a water slide also needs water")
+	sim.water = 60
+	_check(sim.build_attraction(PLAYGROUND, &"water_slide"), "a water slide with water")
+	_check(sim.wood == 880 and sim.water == 0, "it costs 120 wood and 60 water")
+	var built: Array[StringName] = [&"darts", &"water_slide"]
+	_check(sim.attractions_at(PLAYGROUND) == built, "attractions are listed in build order")
+	_check(sim.attraction_count() == 2, "two attractions")
+	_check(sim.total_jobs() == 4, "staff are jobs: %d" % sim.total_jobs())
+	var playgrounds: Array[Vector2i] = [PLAYGROUND]
+	_check(sim.workplaces() == playgrounds, "a staffed playground is a workplace")
+	var previous_price := 0
+	for type: StringName in VillageSim.ATTRACTIONS:
+		var price: int = VillageSim.ATTRACTIONS[type].cost.wood
+		_check(price > previous_price, "attractions are listed cheapest first")
+		previous_price = price
+
+
+const FUN_HOUSES: Array[Vector2i] = [Vector2i(20, 20), Vector2i(20, 22), Vector2i(18, 20), Vector2i(18, 22)]
+
+
+## Just enough houses for these people (up to 16, so a multiple of 4 stays put),
+## a farm and a well, and a playground with these attractions.
+func _fun_village(attractions: Array, people: int) -> VillageSim:
+	var placements := {Vector2i(22, 18): &"farm", Vector2i(22, 24): &"well", PLAYGROUND: &"playground"}
+	for index in range(ceili(people / 4.0)):
+		placements[FUN_HOUSES[index]] = &"house"
+	var sim := _settled(placements, people)
+	sim.wood = 100000
+	sim.water = 100000
+	for type: StringName in attractions:
+		_check(sim.build_attraction(PLAYGROUND, type), "built %s" % type)
+	return sim
+
+
+func _test_staff_run_attractions() -> void:
+	var sim := _fun_village([&"darts", &"arcade"], 8)
+	sim.tick()
+	_check(sim.workers_at(PLAYGROUND) == 2, "both attractions get staff: %d" % sim.workers_at(PLAYGROUND))
+	var saw_inside := false
+	var saw_running := false
+	for i in range(120):
+		var inside := 0
+		for villager in sim.villagers:
+			if villager.job == PLAYGROUND and villager.state == Villager.State.WORKING:
+				inside += 1
+		var staff := sim.attraction_staff(PLAYGROUND)
+		_check(staff[&"darts"].x == 1 and staff[&"arcade"].x == 1, "each attraction has its staff hired")
+		_check(staff[&"darts"].y + staff[&"arcade"].y == inside, "only staff inside run attractions")
+		saw_inside = saw_inside or inside > 0
+		saw_running = saw_running or sim.entertainment() > 0.0
+		sim.tick()
+	_check(saw_inside and saw_running, "staff go underground and the attractions run")
+	_check(sim.entertainment() > 0.0 and sim.entertainment() <= 1.0, "entertainment is 0..1: %f" % sim.entertainment())
+
+
+func _test_entertainment_value() -> void:
+	var nobody := _fun_village([&"darts"], 0)
+	for i in range(30):
+		nobody.tick()
+	_check(nobody.entertainment() == 0.0, "nobody to entertain is no entertainment")
+
+	var unstaffed := _fun_village([], 8)
+	for i in range(60):
+		unstaffed.tick()
+	_check(unstaffed.entertainment() == 0.0, "no attractions means no entertainment")
+
+	# With their staff all inside, darts and arcade have room for 16 guests.
+	var sim := _fun_village([&"darts", &"arcade"], 8)
+	sim.tick()
+	for villager in sim.villagers:
+		if villager.job == PLAYGROUND:
+			villager.state = Villager.State.WORKING
+	_check(sim._entertainment_room() == VillageSim.ENTERTAINMENT_SCALE * 16, "room for 16 guests")
+	for i in range(80):
+		for villager in sim.villagers:
+			if villager.job == PLAYGROUND:
+				villager.state = Villager.State.WORKING
+				villager.timer = 100
+		sim.tick()
+	_check(sim.entertainment() == 1.0, "16 guests is everyone of 8: %f" % sim.entertainment())
+	sim.population = 32
+	for i in range(80):
+		sim.population = 32
+		for villager in sim.villagers:
+			if villager.job == PLAYGROUND:
+				villager.state = Villager.State.WORKING
+				villager.timer = 100
+		sim.tick()
+	_check(sim.entertainment() == 0.5, "16 guests is half of 32: %f" % sim.entertainment())
+
+	# Over time a bigger playground entertains more.
+	var small := _fun_village([&"darts"], 16)
+	var big := _fun_village([&"darts", &"arcade", &"mini_golf", &"bowling_alley"], 16)
+	var small_total := 0.0
+	var big_total := 0.0
+	for i in range(200):
+		small.tick()
+		big.tick()
+		small_total += small.entertainment()
+		big_total += big.entertainment()
+	_check(big_total > small_total * 2.0, "more attractions entertain more: %f vs %f" % [big_total, small_total])
+	_check(big.entertainment() <= 1.0, "entertainment never passes 1")
+
+
+func _test_fun_jobs_come_after_food_and_water() -> void:
+	# A farm and a well have 4 jobs. With 4 people nobody staffs the darts.
+	var sim := _fun_village([&"darts"], 4)
+	for i in range(20):
+		sim.tick()
+	_check(sim.workers_at(PLAYGROUND) == 0, "food and water come before fun")
+	_check(sim.workers_at(Vector2i(22, 18)) == 2 and sim.workers_at(Vector2i(22, 24)) == 2, "the farm and well are full")
+	sim.place(&"house", FUN_HOUSES[1])
+	sim.population = 5
+	sim.tick()
+	_check(sim.workers_at(PLAYGROUND) == 1, "a spare villager staffs the darts")
+
+	# Staff already at the playground leave for a new farm.
+	var busy := _fun_village([&"darts", &"arcade", &"mini_golf"], 8)
+	for i in range(30):
+		busy.tick()
+	_check(busy.workers_at(PLAYGROUND) == 4, "4 spare people staff the attractions: %d" % busy.workers_at(PLAYGROUND))
+	busy.place(&"farm", Vector2i(16, 20))
+	busy.tick()
+	_check(busy.workers_at(Vector2i(16, 20)) == 2, "the new farm takes staff from fun: %d" % busy.workers_at(Vector2i(16, 20)))
+	_check(busy.workers_at(PLAYGROUND) == 2, "the playground keeps who's left: %d" % busy.workers_at(PLAYGROUND))
+	# Balancing never moves farmers or well workers into the playground.
+	for i in range(100):
+		busy.tick()
+		_check(busy.filled_jobs() - busy.workers_at(PLAYGROUND) == 6, "needed jobs stay filled")
+
+
+## Has the dragon strike this cell, with enough budget to burn just it.
+func _dragon_burns(sim: VillageSim, cell: Vector2i) -> void:
+	sim.dragon_state = VillageSim.DragonState.RAMPAGE
+	sim.dragon_target = cell
+	sim.dragon_stay = 10
+	sim.dragon_rampage_ticks = VillageSim.DRAGON_FIRST_STRIKE_TICK
+	sim.dragon_budget = 1
+	sim.dragon_destroyed = 0
+	sim._dragon_strike()
+
+
+func _test_dragon_buries_attractions() -> void:
+	var sim := _fun_village([&"darts", &"bowling_alley"], 12)
+	for x in range(26, 32):
+		sim.place(&"tower", Vector2i(x, 26))
+	for i in range(20):
+		sim.tick()
+	_check(sim.workers_at(PLAYGROUND) > 0, "the playground is staffed")
+	_dragon_burns(sim, PLAYGROUND)
+	_check(sim.building_at(PLAYGROUND) == &"", "the dragon burns the entrance")
+	sim.tick()
+	_check(sim.workers_at(PLAYGROUND) == 0 and sim.attraction_count() == 0, "nothing runs without an entrance")
+	_check(sim.has_buried_attractions(PLAYGROUND), "the attractions wait underground")
+	_check(not sim.can_place(&"house", PLAYGROUND), "only a playground can be built over them")
+	var built: Array[StringName] = [&"darts", &"bowling_alley"]
+	_check(sim.place(&"playground", PLAYGROUND), "the entrance can be rebuilt")
+	_check(sim.attractions_at(PLAYGROUND) == built and not sim.has_buried_attractions(PLAYGROUND), "and reopens them")
+	sim.tick()
+	_check(sim.workers_at(PLAYGROUND) > 0, "staff come back")
+
+	_dragon_burns(sim, PLAYGROUND)
+	var wood := sim.wood
+	_check(sim.demolish(PLAYGROUND), "the ruin can be filled in")
+	_check(sim.wood == wood + 10 + 45, "filling in refunds half the attractions: %d" % (sim.wood - wood))
+	_check(not sim.has_buried_attractions(PLAYGROUND) and sim.can_place(&"house", PLAYGROUND), "and frees the cell")
+	_check(not sim.demolish(PLAYGROUND), "nothing more to fill in")
+
+
+func _test_demolishing_a_playground() -> void:
+	var sim := _fun_village([&"arcade", &"water_slide"], 8)
+	var wood := sim.wood
+	var water := sim.water
+	_check(sim.demolish(PLAYGROUND), "a playground can be demolished")
+	_check(sim.wood == wood + 12 + 20 + 60, "half of the entrance and attractions back: %d" % (sim.wood - wood))
+	_check(sim.water == water + 30, "and half the water slide's water")
+	_check(sim.attractions_at(PLAYGROUND).is_empty() and not sim.has_buried_attractions(PLAYGROUND), "the attractions are gone")
+	sim.place(&"playground", PLAYGROUND)
+	_check(sim.attractions_at(PLAYGROUND).is_empty(), "a new entrance starts empty")
+
+
+func _test_playgrounds_save_and_load() -> void:
+	var sim := _fun_village([&"darts", &"arcade", &"roller_coaster"], 16)
+	sim.place(&"playground", Vector2i(26, 22))
+	sim.build_attraction(Vector2i(26, 22), &"mini_golf")
+	for x in range(26, 32):
+		sim.place(&"tower", Vector2i(x, 26))
+	for i in range(37):
+		sim.tick()
+	_dragon_burns(sim, Vector2i(26, 22))
+	sim.dragon_state = VillageSim.DragonState.WAITING
+	_check(sim.entertainment() > 0.0, "the village is entertained before saving")
+	SaveGame.write(sim, TEST_SAVE)
+	var loaded := SaveGame.read(TEST_SAVE)
+	_check(loaded != null, "a game with playgrounds loads")
+	if loaded == null:
+		return
+	_check(loaded.to_save_data() == sim.to_save_data(), "the loaded playgrounds match")
+	_check(loaded.entertainment() == sim.entertainment(), "entertainment is kept")
+	_check(loaded.has_buried_attractions(Vector2i(26, 22)), "buried attractions are kept")
+	for i in range(40):
+		sim.tick()
+		loaded.tick()
+	_check(loaded.to_save_data() == sim.to_save_data(), "and plays on identically")
+
+	var good := sim.to_save_data()
+	for change: Array in [
+		["types", ["rocket"]], ["types", ["darts", "darts"]], ["types", []], ["types", "darts"],
+		["x", 99], ["x", 20],
+	]:
+		var bad: Dictionary = good.duplicate(true)
+		bad.attractions[0][change[0]] = change[1]
+		_check(VillageSim.from_save_data(bad) == null, "rejects attraction %s = %s" % change)
+	for value: Variant in [-1, 1001, "lots", null]:
+		var bad: Dictionary = good.duplicate(true)
+		bad.entertainment = value
+		_check(VillageSim.from_save_data(bad) == null, "rejects entertainment %s" % value)
+	var missing: Dictionary = good.duplicate(true)
+	missing.erase("attractions")
+	_check(VillageSim.from_save_data(missing) == null, "a version 11 save needs its attractions")
+
+
+func _test_older_saves_have_no_playgrounds() -> void:
+	var data := _settled({Vector2i(20, 20): &"house", Vector2i(24, 20): &"farm"}, 3).to_save_data()
+	for version in [9, 10]:
+		var old: Dictionary = data.duplicate(true)
+		old.version = version
+		old.erase("attractions")
+		old.erase("entertainment")
+		var loaded := VillageSim.from_save_data(old)
+		_check(loaded != null, "a version %d save loads" % version)
+		if loaded != null:
+			_check(loaded.attraction_count() == 0 and loaded.entertainment() == 0.0, "with no attractions")

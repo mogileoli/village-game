@@ -39,6 +39,7 @@ func _ready() -> void:
 		_focus_on_hero(hero))
 	_hud.hero_details_closed.connect(_select_hero.bind(null))
 	_hud.teleport_pressed.connect(_on_teleport_pressed)
+	_hud.attraction_chosen.connect(_build_attraction)
 	SaveGame.move_old_save_to_slot()
 	_hud.set_can_load(SaveGame.any_slot_used())
 	_start_sim(VillageSim.new())
@@ -60,6 +61,7 @@ func _start_sim(new_sim: VillageSim) -> void:
 	_camera.position = _map.world_center()
 	_tick_timer = 0.0
 	_hud.hide_banner()
+	_hud.close_playground()
 	_select_hero(null)
 	_refresh_stats()
 
@@ -115,9 +117,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_use_tool(_map.cell_at_mouse())
 		elif event.button_index == MOUSE_BUTTON_LEFT and _active_tool == &"" and _teleporting == null:
 			# On release, because the camera has already taken any release that ends a drag.
-			var clicked := _villagers.hero_at_mouse()
-			if clicked != null:
-				_select_hero(clicked)
+			_inspect(_map.cell_at_mouse())
 		elif event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
 			# On release, so dragging with the right button to move the map keeps the tool.
 			_cancel_teleport()
@@ -169,6 +169,23 @@ func _on_dragon_left(driven_off: bool, destroyed: int) -> void:
 		_hud.show_banner("The dragon flew away." + losses)
 
 
+## A click with no tool selects a hero there, or else opens a playground.
+func _inspect(cell: Vector2i) -> void:
+	var clicked := _villagers.hero_at_mouse()
+	if clicked != null:
+		_select_hero(clicked)
+	elif sim.is_playground(cell):
+		_hud.open_playground(sim, cell)
+	elif sim.has_buried_attractions(cell):
+		var count := sim.attractions_at(cell).size()
+		_hud.show_status("Build a Playground here to reopen %d attraction%s" % [count, "" if count == 1 else "s"])
+
+
+func _build_attraction(cell: Vector2i, type: StringName) -> void:
+	if sim.build_attraction(cell, type):
+		_hud.show_status("Built the %s" % VillageSim.ATTRACTIONS[type].name)
+
+
 func _use_tool(cell: Vector2i) -> void:
 	if _active_tool == Hud.DEMOLISH:
 		sim.demolish(cell)
@@ -212,7 +229,8 @@ func _update_cursor() -> void:
 	else:
 		_map.hide_range()
 	if _active_tool == Hud.DEMOLISH:
-		_map.show_cursor(cell, sim.building_at(cell) != &"" or sim.has_road(cell), &"")
+		var removable := sim.building_at(cell) != &"" or sim.has_road(cell) or sim.has_buried_attractions(cell)
+		_map.show_cursor(cell, removable, &"")
 	elif _active_tool == Hud.ROAD:
 		_map.show_cursor(cell, sim.can_place_road(cell), &"")
 	elif _active_tool == Hud.BRIDGE:

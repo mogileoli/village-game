@@ -79,6 +79,7 @@ const TUNIC := Color8(56, 112, 200)
 const FONT_COLUMNS := 16
 const GLYPH_W := 7
 const GLYPH_H := 9
+const ATTRACTION_ICON := 16
 ## 5x7 glyphs, one 5-bit value per row.
 const GLYPHS := {
 	"A": [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11], "B": [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
@@ -126,6 +127,7 @@ func _init() -> void:
 	_save_icons()
 	_save_happiness_faces()
 	_save_idle_mark()
+	_save_attraction_icons()
 	_save_panels()
 	_save_font()
 	quit()
@@ -530,8 +532,44 @@ func _docks(image: Image, x0: int) -> void:
 	_rect(image, x0 + 16, 26, 9, 1, WOOD_LIGHT)
 
 
+## A stairway down to the underground playground, under a striped fairground arch.
+func _playground(image: Image, x0: int) -> void:
+	_shadow(image, x0 + 3, 45, 27)
+	# Stone-lined stairwell, its far steps fading into the dark below.
+	_rect(image, x0 + 7, 26, 18, 20, INK)
+	_rect(image, x0 + 8, 27, 16, 18, STONE_MID)
+	_rect(image, x0 + 8, 27, 16, 1, STONE_LIGHT)
+	var steps := [CHAR_DARK, NAVY, NAVY_LIGHT, STONE_DARK, STONE_MID]
+	for index in range(steps.size()):
+		var y := 28 + index * 3
+		_rect(image, x0 + 10, y, 12, 3, steps[index])
+		_rect(image, x0 + 10, y + 2, 12, 1, INK if index < 2 else STONE_DARK if index > 2 else NAVY)
+	_rect(image, x0 + 10, 43, 12, 2, STONE_LIGHT)
+	# Candy-striped posts.
+	for post_x: int in [x0 + 3, x0 + 25]:
+		_rect(image, post_x - 1, 13, 6, 33, INK)
+		for y in range(14, 45):
+			var red := (y / 3) % 2 == 0
+			_rect(image, post_x, y, 3, 1, ROOF_MID if red else WHITE)
+			_rect(image, post_x + 3, y, 1, 1, ROOF_DARK if red else GRAY)
+	# Golden sign board with a row of lights.
+	_rect(image, x0 + 1, 6, 30, 10, INK)
+	_rect(image, x0 + 2, 7, 28, 8, ROOF_DARK)
+	_rect(image, x0 + 3, 8, 26, 6, GOLD)
+	_rect(image, x0 + 3, 13, 26, 1, WHEAT_DARK)
+	for x in range(x0 + 5, x0 + 28, 4):
+		_dot(image, x, 10, ROOF_MID)
+		_dot(image, x + 1, 10, W_MID)
+	# Pennants on top.
+	for flag: Array in [[4, ROOF_MID], [11, W_MID], [18, LEAF], [25, ROOF_MID]]:
+		var left: int = flag[0]
+		_polygon(image, x0, [Vector2(left, 1), Vector2(left + 4, 1), Vector2(left + 2, 5)], flag[1])
+	_rect(image, x0 + 3, 1, 26, 1, WOOD_DARK)
+	_outline(image, x0, CELL)
+
+
 func _save_buildings() -> void:
-	var image := _new_image(CELL * 7, BUILDING_H)
+	var image := _new_image(CELL * 8, BUILDING_H)
 	_house(image, 0)
 	_farm(image, CELL)
 	_lumber_camp(image, CELL * 2)
@@ -539,6 +577,7 @@ func _save_buildings() -> void:
 	_tower(image, CELL * 4)
 	_training_center(image, CELL * 5)
 	_docks(image, CELL * 6)
+	_playground(image, CELL * 7)
 	image.save_png("res://assets/tiles/buildings.png")
 
 
@@ -1202,6 +1241,112 @@ func _face_mouth(image: Image, x0: int, level: int) -> void:
 			_rect(image, x0 + 3, 7, 6, 2, INK)
 			_rect(image, x0 + 4, 7, 4, 1, WHITE)
 			_rect(image, x0 + 5, 8, 2, 1, ROOF_MID)
+
+
+## One 16x16 icon per attraction, in VillageSim.ATTRACTIONS order, then a
+## boarded-up hatch for attractions whose entrance burned down.
+func _save_attraction_icons() -> void:
+	var image := _new_image(ATTRACTION_ICON * 7, ATTRACTION_ICON)
+	_darts_icon(image, 0)
+	_arcade_icon(image, ATTRACTION_ICON)
+	_mini_golf_icon(image, ATTRACTION_ICON * 2)
+	_bowling_icon(image, ATTRACTION_ICON * 3)
+	_water_slide_icon(image, ATTRACTION_ICON * 4)
+	_roller_coaster_icon(image, ATTRACTION_ICON * 5)
+	_hatch_icon(image, ATTRACTION_ICON * 6)
+	for index in range(7):
+		_outline(image, index * ATTRACTION_ICON, ATTRACTION_ICON)
+	image.save_png("res://assets/ui/attractions.png")
+
+
+func _darts_icon(image: Image, x0: int) -> void:
+	var rings := [ROOF_MID, WHITE, ROOF_MID, LEAF, GOLD]
+	for index in range(rings.size()):
+		var radius := 6.5 - index * 1.3
+		_ellipse(image, x0 + 7.5, 8, radius, radius, rings[index])
+	_rect(image, x0 + 10, 3, 5, 1, WOOD_LIGHT)
+	_rect(image, x0 + 8, 4, 3, 1, STONE_LIGHT)
+	_rect(image, x0 + 13, 2, 2, 1, TUNIC)
+	_rect(image, x0 + 13, 4, 2, 1, TUNIC)
+
+
+func _arcade_icon(image: Image, x0: int) -> void:
+	_rect(image, x0 + 3, 1, 10, 15, NAVY_LIGHT)
+	_rect(image, x0 + 3, 1, 10, 2, ROOF_MID)
+	_rect(image, x0 + 5, 4, 6, 5, INK)
+	_rect(image, x0 + 6, 5, 4, 3, LEAF)
+	_dot(image, x0 + 7, 6, WHITE)
+	_rect(image, x0 + 2, 10, 12, 2, STONE_MID)
+	_dot(image, x0 + 5, 10, ROOF_MID)
+	_dot(image, x0 + 9, 10, GOLD)
+	_dot(image, x0 + 11, 10, W_LIGHT)
+	_rect(image, x0 + 4, 13, 8, 1, NAVY)
+
+
+func _mini_golf_icon(image: Image, x0: int) -> void:
+	_ellipse(image, x0 + 7.5, 11.5, 7, 3.5, G_LIGHT)
+	_ellipse(image, x0 + 9, 11.5, 2, 1, INK)
+	_rect(image, x0 + 9, 1, 1, 11, WOOD_LIGHT)
+	_polygon(image, x0, [Vector2(10, 1), Vector2(14, 3), Vector2(10, 5)], ROOF_MID)
+	_ellipse(image, x0 + 3.5, 11, 1.5, 1.5, WHITE)
+
+
+func _bowling_icon(image: Image, x0: int) -> void:
+	_ellipse(image, x0 + 5, 4, 2, 2.5, WHITE)
+	_ellipse(image, x0 + 5, 11, 3, 4, WHITE)
+	_rect(image, x0 + 4, 6, 3, 2, WHITE)
+	_rect(image, x0 + 3, 6, 5, 1, ROOF_MID)
+	_ellipse(image, x0 + 11, 11, 4, 4, NAVY_LIGHT)
+	_dot(image, x0 + 10, 9, INK)
+	_dot(image, x0 + 12, 9, INK)
+	_dot(image, x0 + 11, 11, INK)
+
+
+func _water_slide_icon(image: Image, x0: int) -> void:
+	# Ladder tower on the left.
+	_rect(image, x0 + 1, 2, 1, 13, WOOD_DARK)
+	_rect(image, x0 + 4, 2, 1, 13, WOOD_DARK)
+	for y in range(4, 15, 3):
+		_rect(image, x0 + 2, y, 2, 1, WOOD_LIGHT)
+	_rect(image, x0 + 1, 2, 5, 1, WOOD_MID)
+	# A winding chute down into the pool.
+	for x in range(5, 15):
+		var t := (x - 5) / 9.0
+		var y := 3 + int(round(t * 8.0 + sin(t * TAU) * 2.0))
+		_rect(image, x0 + x, y, 1, 3, W_MID)
+		_dot(image, x0 + x, y, W_FOAM)
+	_rect(image, x0 + 6, 14, 10, 2, W_LIGHT)
+	_dot(image, x0 + 14, 12, W_FOAM)
+
+
+func _roller_coaster_icon(image: Image, x0: int) -> void:
+	# A tall hill, then a small one, on a wooden trestle.
+	for x in range(16):
+		var height := sin(x / 10.0 * PI) * 9.0 if x <= 10 else sin((x - 10) / 5.0 * PI) * 4.0
+		var y := 13 - int(round(height))
+		_dot(image, x0 + x, y, ROOF_DARK)
+		_dot(image, x0 + x, y + 1, WOOD_LIGHT)
+		if x % 3 == 1:
+			_rect(image, x0 + x, y + 2, 1, 14 - y, WOOD_MID)
+	_rect(image, x0 + 0, 15, 16, 1, WOOD_DARK)
+	# The car, cresting the tall hill.
+	_rect(image, x0 + 2, 1, 6, 3, TUNIC)
+	_rect(image, x0 + 2, 1, 6, 1, W_LIGHT)
+	_dot(image, x0 + 3, 4, INK)
+	_dot(image, x0 + 6, 4, INK)
+	_dot(image, x0 + 4, 0, SKIN)
+
+
+func _hatch_icon(image: Image, x0: int) -> void:
+	_rect(image, x0 + 1, 3, 14, 12, SOIL_DARK)
+	for y in range(4, 14, 3):
+		_rect(image, x0 + 2, y, 12, 2, WOOD_MID)
+		_rect(image, x0 + 2, y, 12, 1, WOOD_LIGHT)
+	_rect(image, x0 + 2, 6, 12, 1, WOOD_DARK)
+	for index in range(12):
+		_dot(image, x0 + 2 + index, 4 + index * 10 / 11, WOOD_DARK)
+	_dot(image, x0 + 7, 9, GOLD)
+	_dot(image, x0 + 8, 9, GOLD)
 
 
 ## A speech bubble with an exclamation mark.
