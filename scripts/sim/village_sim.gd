@@ -43,12 +43,14 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 9
+const SAVE_VERSION := 12
 ## The first save version that can have roads on water, which are bridges.
 const FIRST_BRIDGE_VERSION := 7
 const FIRST_HERO_VERSION := 8
 ## The first save version that can hold more than one hero.
 const FIRST_HERO_ROSTER_VERSION := 9
+## The first save version that keeps how happy the village is.
+const FIRST_HAPPINESS_VERSION := 12
 const ROAD_COST := 1
 const BRIDGE_COST := 5
 ## Wood gained from each forest cell cleared.
@@ -139,6 +141,7 @@ var dragon_previous_target := Vector2i.ZERO
 var villagers: Array[Villager] = []
 var heroes: Array[Hero] = []
 var dragon_slain := false
+var happiness := Happiness.new()
 
 var _terrain := PackedByteArray()
 var _buildings: Dictionary[Vector2i, StringName] = {}
@@ -352,16 +355,29 @@ func tick() -> void:
 		food = maxi(food - population, 0)
 		water = maxi(water - population, 0)
 
+	happiness.update(self)
 	if tick_count % POPULATION_INTERVAL == 0:
-		var short_of_supplies := food == 0 or water == 0
-		if short_of_supplies:
-			if population > FOUNDERS:
-				population -= 1
-		elif population < housing():
-			population += 1
+		_update_population()
 	_advance_heroes()
 	_advance_dragon()
 	stats_changed.emit()
+
+
+## Shortages drive people out. Otherwise people settle while there's room, faster
+## in a happy village and slower in an unhappy one.
+func _update_population() -> void:
+	var round_number := tick_count / POPULATION_INTERVAL
+	var short_of_supplies := food == 0 or water == 0
+	if short_of_supplies or happiness.someone_leaves(round_number):
+		if population > FOUNDERS:
+			population -= 1
+	elif population < housing():
+		population = mini(population + happiness.settlers(round_number), housing())
+
+
+## Each factor's happiness score from 0 to 1. See Happiness.FACTORS.
+func happiness_factors() -> Dictionary[StringName, float]:
+	return happiness.scores(self)
 
 
 func to_save_data() -> Dictionary:
@@ -383,7 +399,7 @@ func to_save_data() -> Dictionary:
 	var saved_roads: Array[Dictionary] = []
 	for cell: Vector2i in _roads:
 		saved_roads.append({"x": cell.x, "y": cell.y})
-	return {
+	var data := {
 		"version": SAVE_VERSION,
 		"width": width,
 		"height": height,
@@ -414,6 +430,8 @@ func to_save_data() -> Dictionary:
 		"dragon_slain": dragon_slain,
 		"heroes": heroes.map(func(hero: Hero) -> Dictionary: return hero.to_data()),
 	}
+	happiness.save_into(data)
+	return data
 
 
 ## Returns null if the data isn't a valid save, so bad files can't corrupt a game.
@@ -470,6 +488,12 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 		return null
 	if version < 5:
 		sim.water = sim.population * OLD_SAVE_WATER_TICKS / MEAL_INTERVAL
+	if version >= FIRST_HAPPINESS_VERSION:
+		if not sim.happiness.load_from(data):
+			return null
+	else:
+		# Older saves start out exactly as happy as their village makes them.
+		sim.happiness.settle(sim)
 	return sim
 
 
@@ -756,6 +780,7 @@ func _dragon_strike() -> void:
 			_layout_changed(cell)
 			cell_changed.emit(cell)
 		population = mini(population, housing())
+		happiness.dragon_destroyed(destroyed.size())
 		var radius: Vector2i = DRAGON_LEVELS[dragon_level].burn_radius
 		burned = _burn_around(destroyed, _visit_rng(dragon_rampage_ticks).randi_range(radius.x, radius.y))
 		dragon_destroyed += destroyed.size()

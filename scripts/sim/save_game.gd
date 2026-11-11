@@ -32,6 +32,7 @@ class SlotInfo:
 	var buildings := 0
 	var game_seconds := 0
 	var fighters := 0
+	var happiness := 0
 
 
 static func slot_path(slot: int) -> String:
@@ -95,6 +96,7 @@ static func slot_info(slot: int) -> SlotInfo:
 	info.buildings = sim.building_count()
 	info.game_seconds = sim.tick_count
 	info.fighters = sim.fighter_count()
+	info.happiness = roundi(sim.happiness.value)
 	return info
 
 

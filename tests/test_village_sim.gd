@@ -75,6 +75,18 @@ func _init() -> void:
 	_test_older_saves_have_no_hero()
 	_test_single_hero_saves_still_load()
 	_test_rejects_bad_heroes()
+	_test_happiness_factor_table()
+	_test_happiness_supplies()
+	_test_happiness_jobs()
+	_test_happiness_housing()
+	_test_happiness_defense()
+	_test_happiness_fears_dragon_damage()
+	_test_happiness_roads()
+	_test_happiness_range_and_weights()
+	_test_happiness_moves_gradually()
+	_test_happiness_changes_growth()
+	_test_happiness_survives_save_and_load()
+	_test_older_saves_get_happiness()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -662,6 +674,8 @@ func _test_save_slots() -> void:
 	_check(info.population == sim.population and info.housing == sim.housing(), "people come back")
 	_check(info.filled_jobs == sim.filled_jobs() and info.total_jobs == 2, "jobs come back")
 	_check(info.buildings == 2 and info.game_seconds == 30, "buildings and time come back")
+	_check(info.happiness == roundi(sim.happiness.value), "happiness comes back: %d" % info.happiness)
+	_check("Happiness %d" % info.happiness in SaveMenu.describe_slot(info), "the slot shows happiness")
 	var loaded := SaveGame.read_slot(2)
 	_check(loaded != null and loaded.to_save_data() == sim.to_save_data(), "slot holds the whole game")
 	_check(SaveGame.slot_info(1).status == SaveGame.SlotInfo.Status.EMPTY, "other slots are untouched")
@@ -1510,3 +1524,274 @@ func _test_teleported_hero_still_hunts() -> void:
 	for i in range(45):
 		sim.tick()
 	_check(hits[0] > 0, "a dragon calls a teleported hero away from their post")
+
+
+# --- Happiness ---
+
+## Houses spaced out with walkable ground between, then any other buildings asked for.
+func _happiness_village(houses: int, others: Dictionary = {}) -> VillageSim:
+	var sim := VillageSim.new(40, 40, 1, 1)
+	sim.wood = 100000
+	var free: Array[Vector2i] = []
+	for y in range(12, 29, 2):
+		for x in range(12, 29, 2):
+			free.append(Vector2i(x, y))
+	var wanted: Array[StringName] = []
+	for i in range(houses):
+		wanted.append(&"house")
+	for type: StringName in others:
+		for i in range(others[type]):
+			wanted.append(type)
+	for type in wanted:
+		while not sim.place(type, free.pop_front()):
+			pass
+	return sim
+
+
+func _test_happiness_factor_table() -> void:
+	var sim := VillageSim.new()
+	var ids: Array[StringName] = []
+	for factor in Happiness.FACTORS:
+		_check(sim.happiness.has_method("_score_%s" % factor.id), "factor %s has a score method" % factor.id)
+		_check(factor.weight > 0.0 and factor.label is String, "factor %s has a weight and label" % factor.id)
+		ids.append(factor.id)
+	_check(sim.happiness_factors().keys() == ids, "every factor is scored, in order")
+	_check(&"entertainment" in ids, "there's an entertainment hook")
+	_check(sim.happiness_factors()[&"entertainment"] == Happiness.NEUTRAL_SCORE, "entertainment is neutral for now")
+	_check(sim.happiness.value == Happiness.START_VALUE, "a new village starts in between")
+
+
+func _test_happiness_supplies() -> void:
+	var sim := _happiness_village(2)
+	sim.population = 8
+	sim.food = 0
+	sim.water = 0
+	var scores := sim.happiness_factors()
+	_check(scores[&"food"] == 0.0 and scores[&"water"] == 0.0, "nothing in store and nobody making it")
+	sim.food = 8 * int(Happiness.SUPPLY_COMFORT_TICKS) / VillageSim.MEAL_INTERVAL
+	sim.water = sim.food / 2
+	scores = sim.happiness_factors()
+	_check(is_equal_approx(scores[&"food"], 1.0), "a big enough stock is plenty: %f" % scores[&"food"])
+	_check(is_equal_approx(scores[&"water"], 0.5), "half that is half as good: %f" % scores[&"water"])
+
+	var farming := _happiness_village(2, {&"farm": 4})
+	farming.population = 8
+	var best := 0.0
+	for i in range(40):
+		farming.food = 0
+		farming.tick()
+		best = maxf(best, farming.happiness_factors()[&"food"])
+	_check(best >= 1.0, "making more than is eaten feels secure even with an empty store: %f" % best)
+
+
+func _test_happiness_jobs() -> void:
+	var idle := _happiness_village(2)
+	idle.population = 8
+	_check(idle.happiness_factors()[&"jobs"] == 0.0, "nobody employed")
+	var half := _happiness_village(2, {&"farm": 2})
+	half.population = 8
+	_check(is_equal_approx(half.happiness_factors()[&"jobs"], 0.5), "half employed: %f" % half.happiness_factors()[&"jobs"])
+	var full := _happiness_village(2, {&"farm": 2, &"well": 2})
+	full.population = 8
+	_check(full.happiness_factors()[&"jobs"] == 1.0, "everyone employed")
+	_check(VillageSim.new().happiness_factors()[&"jobs"] == 1.0, "nobody to employ is fine")
+
+
+func _test_happiness_housing() -> void:
+	var sim := _happiness_village(5)
+	_check(sim.happiness_factors()[&"housing"] == 1.0, "empty houses are roomy")
+	sim.population = 16
+	_check(sim.happiness_factors()[&"housing"] == 1.0, "80 in 100 full is still comfortable")
+	sim.population = 20
+	_check(is_equal_approx(sim.happiness_factors()[&"housing"], Happiness.CROWDED_SCORE), "full houses are crowded")
+	sim.population = 18
+	var between: float = sim.happiness_factors()[&"housing"]
+	_check(between > Happiness.CROWDED_SCORE and between < 1.0, "crowding grows as houses fill: %f" % between)
+
+
+func _test_happiness_defense() -> void:
+	var small := _happiness_village(VillageSim.DRAGON_MIN_BUILDINGS - 1)
+	_check(small.happiness_factors()[&"defense"] == 1.0, "too small to draw a dragon")
+	var open := _happiness_village(12)
+	_check(open.happiness_factors()[&"defense"] == 0.0, "a big village with no defenses worries")
+	var towered := _happiness_village(11, {&"tower": 1})
+	_check(towered.happiness_factors()[&"defense"] == 1.0, "a tower guards a dozen buildings")
+	var stretched := _happiness_village(23, {&"tower": 1})
+	var partly: float = stretched.happiness_factors()[&"defense"]
+	_check(partly > 0.5 and partly < 1.0, "one tower isn't enough for twice the village: %f" % partly)
+	stretched.population = 4
+	stretched.tick()
+	stretched.villagers[0].training = VillageSim.TRAINING_TICKS
+	stretched.villagers[1].training = VillageSim.TRAINING_TICKS
+	_check(stretched.happiness_factors()[&"defense"] > partly, "trained fighters help")
+	var heroic := _happiness_village(23, {&"tower": 1})
+	heroic.heroes.append(Hero.create("Aria", &"chainmail", &"longsword", &"ember"))
+	_check(heroic.happiness_factors()[&"defense"] == 1.0, "a hero helps a lot")
+
+
+func _test_happiness_fears_dragon_damage() -> void:
+	var sim := _village(30, 3)
+	_check(sim.happiness_factors()[&"safety"] == 1.0, "no dragon damage yet")
+	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
+	_check(sim.dragon_destroyed > 0, "the dragon destroyed something")
+	var scared: float = sim.happiness_factors()[&"safety"]
+	_check(scared < 1.0, "losses scare people: %f" % scared)
+	for i in range(30):
+		sim.tick()
+	_check(sim.happiness_factors()[&"safety"] > scared, "the fear fades")
+	sim.happiness.dragon_destroyed(100)
+	_check(sim.happiness_factors()[&"safety"] == 0.0, "fear has a limit")
+	for i in range(Happiness.MAX_FEAR_TICKS):
+		sim.happiness.update(sim)
+	_check(sim.happiness_factors()[&"safety"] == 1.0, "and wears off completely")
+
+
+func _test_happiness_roads() -> void:
+	var sim := _happiness_village(2)
+	_check(sim.happiness_factors()[&"roads"] == 0.0, "no roads to the houses")
+	sim.place_road(sim.houses()[0] + Vector2i.DOWN)
+	_check(sim.happiness_factors()[&"roads"] == 0.5, "one of two houses on a road")
+
+
+func _test_happiness_range_and_weights() -> void:
+	var thriving := _happiness_village(5, {&"farm": 2, &"well": 2})
+	thriving.population = 8
+	thriving.food = 10000
+	thriving.water = 10000
+	for house in thriving.houses():
+		thriving.place_road(house + Vector2i.DOWN)
+	var scores := thriving.happiness_factors()
+	var weighted := 0.0
+	var weights := 0.0
+	for factor in Happiness.FACTORS:
+		weighted += factor.weight * scores[factor.id]
+		weights += factor.weight
+	var best := thriving.happiness.target(thriving)
+	_check(is_equal_approx(best, 100.0 * weighted / weights), "the target is the weighted mix")
+	_check(Happiness.level_of(best) == Happiness.Level.DELIGHTED and best <= 100.0, "a thriving village is delighted: %f" % best)
+
+	var wretched := _happiness_village(VillageSim.DRAGON_MIN_BUILDINGS + 3)
+	wretched.population = wretched.housing()
+	wretched.food = 0
+	wretched.water = 0
+	wretched.happiness.dragon_destroyed(100)
+	var worst := wretched.happiness.target(wretched)
+	_check(worst >= 0.0 and Happiness.level_of(worst) == Happiness.Level.MISERABLE, "a starving, jobless, scared village is miserable: %f" % worst)
+	var hungry := _happiness_village(2, {&"farm": 2, &"well": 2})
+	hungry.population = 8
+	hungry.food = 0
+	hungry.water = 10000
+	_check(Happiness.level_of(hungry.happiness.target(hungry)) <= Happiness.Level.OKAY, "running out of food alone is enough to stop being happy")
+	wretched.happiness.value = 0.0
+	var in_range := true
+	for i in range(1000):
+		wretched.tick()
+		in_range = in_range and wretched.happiness.value >= 0.0 and wretched.happiness.value <= 100.0
+	_check(in_range, "happiness stays in range")
+	_check(Happiness.level_of(0.0) == Happiness.Level.MISERABLE, "0 is miserable")
+	_check(Happiness.level_of(25.0) == Happiness.Level.UNHAPPY, "25 is unhappy")
+	_check(Happiness.level_of(44.9) == Happiness.Level.UNHAPPY, "44.9 is unhappy")
+	_check(Happiness.level_of(45.0) == Happiness.Level.OKAY, "45 is okay")
+	_check(Happiness.level_of(87.9) == Happiness.Level.HAPPY, "87.9 is happy")
+	_check(Happiness.level_of(100.0) == Happiness.Level.DELIGHTED, "100 is delighted")
+
+
+func _test_happiness_moves_gradually() -> void:
+	var villages: Array[VillageSim] = []
+	for i in range(2):
+		var sim := _happiness_village(2)
+		sim.population = 8
+		sim.food = 0
+		sim.water = 0
+		sim.happiness.value = 100.0
+		villages.append(sim)
+	var a := villages[0]
+	a.tick()
+	_check(a.happiness.value < 100.0 and a.happiness.value > 97.0, "one tick moves it only a little: %f" % a.happiness.value)
+	for i in range(299):
+		a.tick()
+	for i in range(300):
+		villages[1].tick()
+	_check(absf(a.happiness.value - a.happiness.target(a)) < 2.0, "it settles near the target: %f" % a.happiness.value)
+	_check(a.happiness.value < 40.0, "a hungry, jobless village ends up unhappy: %f" % a.happiness.value)
+	_check(a.happiness.value == villages[1].happiness.value, "the same village gets the same happiness")
+
+
+## Runs a village with happiness held at this value, returning how many people came.
+func _growth_at(happiness: float, ticks: int) -> int:
+	var sim := _happiness_village(10, {&"farm": 3, &"well": 3})
+	sim.population = 4
+	for i in range(ticks):
+		sim.food = 10000
+		sim.water = 10000
+		sim.happiness.value = happiness
+		sim.tick()
+	return sim.population - 4
+
+
+func _test_happiness_changes_growth() -> void:
+	var ticks := VillageSim.POPULATION_INTERVAL * 20
+	_check(_growth_at(55.0, ticks) == 20, "an okay village grows as before")
+	_check(_growth_at(35.0, ticks) == 10, "an unhappy village grows half as fast")
+	_check(_growth_at(78.0, ticks) == 25, "a happy village grows a quarter faster")
+	_check(_growth_at(100.0, ticks) == 30, "a delighted village grows half again as fast")
+	_check(_growth_at(0.0, ticks) == 0, "nobody joins a miserable village, and the founders stay")
+
+	var leaving := _happiness_village(10, {&"farm": 3, &"well": 3})
+	leaving.population = 20
+	for i in range(VillageSim.POPULATION_INTERVAL * Happiness.MISERABLE_LEAVER_EVERY * 4):
+		leaving.food = 10000
+		leaving.water = 10000
+		leaving.happiness.value = 0.0
+		leaving.tick()
+	_check(leaving.population == 16, "people slowly leave a miserable village: %d" % leaving.population)
+	for i in range(VillageSim.POPULATION_INTERVAL * 200):
+		leaving.happiness.value = 0.0
+		leaving.tick()
+	_check(leaving.population == VillageSim.FOUNDERS, "but the founders always stay: %d" % leaving.population)
+
+
+func _test_happiness_survives_save_and_load() -> void:
+	var sim := _village(30, 3)
+	sim.population = 20
+	_run_dragon(sim, VillageSim.DragonState.DEPARTING)
+	for i in range(7):
+		sim.tick()
+	_check(sim.happiness.dragon_fear > 0 and sim.happiness.value != Happiness.START_VALUE, "happiness has moved")
+	var data := sim.to_save_data()
+	_check(data.version == 12, "saves are version 12")
+	var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(data)))
+	_check(loaded != null, "a game with happiness loads")
+	if loaded == null:
+		return
+	_check(loaded.happiness.value == sim.happiness.value, "happiness loads exactly")
+	_check(loaded.happiness.dragon_fear == sim.happiness.dragon_fear, "fear loads")
+	for i in range(50):
+		sim.tick()
+		loaded.tick()
+	_check(loaded.happiness.value == sim.happiness.value and loaded.population == sim.population, "and plays on identically")
+
+	for bad: Variant in [-1, 100001, 1.5, "50", null]:
+		var broken := sim.to_save_data()
+		broken.happiness = bad
+		_check(VillageSim.from_save_data(broken) == null, "rejects happiness %s" % bad)
+	var scared := sim.to_save_data()
+	scared.dragon_fear = Happiness.MAX_FEAR_TICKS + 1
+	_check(VillageSim.from_save_data(scared) == null, "rejects too much fear")
+
+
+func _test_older_saves_get_happiness() -> void:
+	var sim := _happiness_village(2)
+	sim.population = 8
+	sim.food = 0
+	var data := sim.to_save_data()
+	data.version = 9
+	data.erase("happiness")
+	data.erase("dragon_fear")
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null, "a version 9 save loads")
+	if loaded != null:
+		var gap := absf(loaded.happiness.value - loaded.happiness.target(loaded))
+		_check(gap <= 0.5 / Happiness.STEPS_PER_POINT, "it starts as happy as it should be: %f" % gap)
+		_check(loaded.happiness.value < Happiness.START_VALUE, "a hungry, jobless village starts unhappy: %f" % loaded.happiness.value)
+		_check(loaded.happiness.dragon_fear == 0, "with no fear")
