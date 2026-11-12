@@ -1186,6 +1186,16 @@ func _save_icons() -> void:
 	_outline(water_icon, 0, 12)
 	water_icon.save_png("res://assets/ui/icon_water.png")
 
+	# A gold coin, a little rim shadow at the bottom right and a stamped mark.
+	var coin := _new_image(12, 12)
+	_ellipse(coin, 5.5, 5.5, 5, 5, WHEAT_DARK)
+	_ellipse(coin, 5, 5, 4, 4, GOLD)
+	_ellipse(coin, 5.5, 5.5, 2.5, 2.5, WHEAT_DARK)
+	_ellipse(coin, 5.5, 5.5, 1.5, 1.5, GOLD)
+	_dot(coin, 3, 3, WHITE)
+	_outline(coin, 0, 12)
+	coin.save_png("res://assets/ui/icon_money.png")
+
 	var fighter_icon := _new_image(12, 12)
 	_ellipse(fighter_icon, 5.5, 5, 4.5, 4, STONE_LIGHT)
 	_rect(fighter_icon, 1, 5, 10, 2, STONE_MID)

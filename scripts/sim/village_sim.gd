@@ -24,24 +24,26 @@ const BUILDINGS := {
 	&"well": {"name": "Well", "cost": 15, "water": 3, "jobs": 2},
 	&"tower": {"name": "Tower", "cost": 40, "defense": true},
 	&"training_center": {"name": "Training Center", "label": "Training", "cost": 30, "training": 1, "jobs": 2},
-	# Docks make food through fishing trips (see _fish), not every tick, so the
-	# 0 here only marks food as what they produce.
-	&"docks": {"name": "Docks", "cost": 20, "food": 0, "jobs": 2, "on_water": true, "fishing": true},
+	# Docks earn money by selling fish (see _fish), not every tick, so the 0
+	# here only marks money as what they produce.
+	&"docks": {"name": "Docks", "cost": 20, "money": 0, "jobs": 2, "on_water": true, "fishing": true},
 	## An entrance to an underground playground. Its jobs are the staff of the
 	## attractions built under it (see ATTRACTIONS).
 	&"playground": {"name": "Playground", "cost": 25, "fun": true},
 }
 ## Built under a playground entrance, at most one of each per entrance. Each runs
 ## only while its staff work inside the entrance, and then entertains up to
-## "guests" villagers. Costs are in the named resources.
+## "guests" villagers. Costs are in the named resources (see RESOURCES).
 const ATTRACTIONS := {
-	&"darts": {"name": "Darts", "cost": {"wood": 20}, "staff": 1, "guests": 6},
-	&"arcade": {"name": "Arcade", "cost": {"wood": 40}, "staff": 1, "guests": 10},
-	&"mini_golf": {"name": "Mini Golf", "cost": {"wood": 60}, "staff": 2, "guests": 14},
-	&"bowling_alley": {"name": "Bowling Alley", "cost": {"wood": 90}, "staff": 2, "guests": 20},
-	&"water_slide": {"name": "Water Slide", "cost": {"wood": 120, "water": 60}, "staff": 3, "guests": 28},
-	&"roller_coaster": {"name": "Roller Coaster", "cost": {"wood": 200}, "staff": 4, "guests": 40},
+	&"darts": {"name": "Darts", "cost": {"money": 30}, "staff": 1, "guests": 6},
+	&"arcade": {"name": "Arcade", "cost": {"money": 60}, "staff": 1, "guests": 10},
+	&"mini_golf": {"name": "Mini Golf", "cost": {"money": 100}, "staff": 2, "guests": 14},
+	&"bowling_alley": {"name": "Bowling Alley", "cost": {"money": 160}, "staff": 2, "guests": 20},
+	&"water_slide": {"name": "Water Slide", "cost": {"money": 240}, "staff": 3, "guests": 28},
+	&"roller_coaster": {"name": "Roller Coaster", "cost": {"money": 360}, "staff": 4, "guests": 40},
 }
+## Everything a cost may be paid in: each is a whole-number property of the sim.
+const RESOURCES: Array[String] = ["wood", "food", "water", "money"]
 ## Each tick, entertainment moves this fraction of the way to its current level,
 ## so it doesn't flicker as staff come and go between shifts.
 const ENTERTAINMENT_EASE_DIVISOR := 10
@@ -66,7 +68,7 @@ const FIGHTER_DAMAGE := 3
 ## Saves from before water get enough to last this long while wells go up.
 const OLD_SAVE_WATER_TICKS := 60
 const CLEAR_START_RADIUS := 5
-const SAVE_VERSION := 12
+const SAVE_VERSION := 13
 ## The first save version that can have roads on water, which are bridges.
 const FIRST_BRIDGE_VERSION := 7
 const FIRST_HERO_VERSION := 8
@@ -78,6 +80,8 @@ const FIRST_DOCKS_VERSION := 10
 const FIRST_PLAYGROUND_VERSION := 11
 ## The first save version that keeps how happy the village is.
 const FIRST_HAPPINESS_VERSION := 12
+## The first save version with money. Fish sold for it, instead of eaten.
+const FIRST_MONEY_VERSION := 13
 const ROAD_COST := 1
 const BRIDGE_COST := 5
 ## Wood gained from each forest cell cleared.
@@ -102,10 +106,10 @@ const FISHING_RANGE := 4
 ## Fish caught each tick at the fishing spot: this, plus one for each open
 ## water cell around the spot, so open water out from the shore is richer.
 const FISH_BASE_CATCH := 18
-## Fish it takes to make one food. An average 12 tick shift has 8 ticks of
-## fishing, so open water gives 26 food a shift, a narrow river 20 and a farm
-## worker 24.
-const FISH_PER_FOOD := 8
+## Fish it takes to earn one coin. An average 12 tick shift has 8 ticks of
+## fishing, so open water earns 26 money a shift and a narrow river 20. With
+## the walk there and back, a dock with two workers earns nearly 2 a tick.
+const FISH_PER_COIN := 8
 const INVALID_CELL := Vector2i(-2, -2)
 ## One building is under 10% of the village only once there are at least 11,
 ## so a dragon's timer doesn't run until then.
@@ -162,6 +166,8 @@ var height: int
 var wood := 60
 var food := 20
 var water := 40
+## Earned by selling fish, and spent on attractions.
+var money := 0
 var population := 0
 var tick_count := 0
 var dragon_state := DragonState.WAITING
@@ -449,7 +455,10 @@ func can_afford_attraction(type: StringName) -> bool:
 	if not ATTRACTIONS.has(type):
 		return false
 	var cost: Dictionary = ATTRACTIONS[type].cost
-	return wood >= cost.get("wood", 0) and water >= cost.get("water", 0)
+	for resource: String in RESOURCES:
+		if get(resource) < cost.get(resource, 0):
+			return false
+	return true
 
 
 func can_build_attraction(cell: Vector2i, type: StringName) -> bool:
@@ -459,9 +468,7 @@ func can_build_attraction(cell: Vector2i, type: StringName) -> bool:
 func build_attraction(cell: Vector2i, type: StringName) -> bool:
 	if not can_build_attraction(cell, type):
 		return false
-	var cost: Dictionary = ATTRACTIONS[type].cost
-	wood -= cost.get("wood", 0)
-	water -= cost.get("water", 0)
+	_pay(ATTRACTIONS[type].cost, -1, 1)
 	if not _attractions.has(cell):
 		_attractions[cell] = []
 	_attractions[cell].append(type)
@@ -521,10 +528,15 @@ func _ease_entertainment() -> void:
 ## any building, and they're gone for good.
 func _refund_attractions(cell: Vector2i) -> void:
 	for type: StringName in _attractions.get(cell, []):
-		var cost: Dictionary = ATTRACTIONS[type].cost
-		wood += cost.get("wood", 0) / 2
-		water += cost.get("water", 0) / 2
+		_pay(ATTRACTIONS[type].cost, 1, 2)
 	_attractions.erase(cell)
+
+
+## Adds direction * cost / divisor of each resource in the cost: -1, 1 pays it in full
+## and 1, 2 refunds half.
+func _pay(cost: Dictionary, direction: int, divisor: int) -> void:
+	for resource: String in RESOURCES:
+		set(resource, get(resource) + direction * (cost.get(resource, 0) / divisor))
 
 
 ## Demolishing the ground over a burned entrance fills in its attractions.
@@ -591,6 +603,7 @@ func tick() -> void:
 			wood += workplace.get("wood", 0)
 			food += workplace.get("food", 0)
 			water += workplace.get("water", 0)
+			money += workplace.get("money", 0)
 			if workplace.has("training") and not is_fighter(villager):
 				villager.training += workplace.training
 				if is_fighter(villager):
@@ -656,6 +669,7 @@ func to_save_data() -> Dictionary:
 		"wood": wood,
 		"food": food,
 		"water": water,
+		"money": money,
 		"population": population,
 		"tick_count": tick_count,
 		"buildings": saved_buildings,
@@ -704,9 +718,10 @@ static func from_save_data(data: Dictionary) -> VillageSim:
 	sim.wood = _whole_number(data, "wood")
 	sim.food = _whole_number(data, "food")
 	sim.water = _whole_number(data, "water") if version >= 5 else 0
+	sim.money = _whole_number(data, "money") if version >= FIRST_MONEY_VERSION else 0
 	sim.population = _whole_number(data, "population")
 	sim.tick_count = _whole_number(data, "tick_count")
-	if sim.wood < 0 or sim.food < 0 or sim.water < 0 or sim.population < 0 or sim.tick_count < 0:
+	if sim.wood < 0 or sim.food < 0 or sim.water < 0 or sim.money < 0 or sim.population < 0 or sim.tick_count < 0:
 		return null
 
 	if not data.get("buildings") is Array:
@@ -1427,9 +1442,9 @@ func _fish(villager: Villager) -> void:
 	villager.shift_ticks += 1
 
 
-## Brings the boat's catch ashore as food, at the end of a shift.
+## Brings the boat's catch ashore and sells it, at the end of a shift.
 func _land_catch(villager: Villager) -> void:
-	food += (villager.fish + FISH_PER_FOOD / 2) / FISH_PER_FOOD
+	money += (villager.fish + FISH_PER_COIN / 2) / FISH_PER_COIN
 	_lose_catch(villager)
 
 

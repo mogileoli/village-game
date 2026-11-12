@@ -76,9 +76,9 @@ func _init() -> void:
 	_test_single_hero_saves_still_load()
 	_test_rejects_bad_heroes()
 	_test_docks_placement_rules()
-	_test_docks_fish_for_food()
+	_test_docks_sell_fish_for_money()
 	_test_boats_stay_on_water()
-	_test_docks_rival_farms()
+	_test_docks_earn_steadily()
 	_test_cut_short_shift_loses_the_catch()
 	_test_docks_save_and_play_on_identically()
 	_test_older_saves_reject_docks()
@@ -104,6 +104,8 @@ func _init() -> void:
 	_test_playgrounds_save_and_load()
 	_test_older_saves_have_no_playgrounds()
 	_test_attractions_make_people_happier()
+	_test_money_survives_save_and_load()
+	_test_older_saves_have_no_money()
 	DirAccess.remove_absolute(TEST_SAVE)
 	print("FAILED: %d" % _failures if _failures else "All sim tests passed")
 	quit(1 if _failures else 0)
@@ -688,6 +690,7 @@ func _test_save_slots() -> void:
 	_check(info.name == "Sunny Hollow", "name comes back: %s" % info.name)
 	_check(info.saved_at == 1000000, "save time comes back: %d" % info.saved_at)
 	_check(info.wood == sim.wood and info.food == sim.food, "resources come back")
+	_check(info.money == sim.money and "Money %d" % info.money in SaveMenu.describe_slot(info), "the slot shows money")
 	_check(info.population == sim.population and info.housing == sim.housing(), "people come back")
 	_check(info.filled_jobs == sim.filled_jobs() and info.total_jobs == 2, "jobs come back")
 	_check(info.buildings == 2 and info.game_seconds == 30, "buildings and time come back")
@@ -1578,8 +1581,8 @@ func _test_docks_placement_rules() -> void:
 	_check(sim.demolish(shore) and sim.terrain_at(shore) == VillageSim.Terrain.WATER, "demolished docks leave water")
 
 
-## Food only comes ashore at the end of a shift, and matches what was caught.
-func _test_docks_fish_for_food() -> void:
+## Fish only come ashore at the end of a shift, and sell for what was caught.
+func _test_docks_sell_fish_for_money() -> void:
 	var sim := _lake_sim(2)
 	var dock := Vector2i(24, 20)
 	sim.place(&"docks", dock)
@@ -1589,6 +1592,7 @@ func _test_docks_fish_for_food() -> void:
 	var fishing_ticks := 0
 	for i in range(300):
 		var food := sim.food
+		var money := sim.money
 		var fish_before: Array[int] = []
 		var working_before: Array[bool] = []
 		for villager in sim.villagers:
@@ -1603,11 +1607,12 @@ func _test_docks_fish_for_food() -> void:
 		for index in range(fish_before.size()):
 			var villager := sim.villagers[index]
 			if working_before[index] and villager.state != Villager.State.WORKING:
-				expected += (fish_before[index] + VillageSim.FISH_PER_FOOD / 2) / VillageSim.FISH_PER_FOOD
+				expected += (fish_before[index] + VillageSim.FISH_PER_COIN / 2) / VillageSim.FISH_PER_COIN
 				landings += 1
 			elif villager.fish > fish_before[index]:
 				_check(villager.state == Villager.State.WORKING, "only people at work catch fish")
-		_check(sim.food - food + eaten == expected, "food is the catch brought ashore, tick %d" % sim.tick_count)
+		_check(sim.money - money == expected, "money is the catch brought ashore, tick %d" % sim.tick_count)
+		_check(sim.food == maxi(food - eaten, 0), "fish aren't eaten, tick %d" % sim.tick_count)
 	_check(landings >= 10, "catches come ashore: %d" % landings)
 	_check(fishing_ticks > 100, "people spend time fishing: %d" % fishing_ticks)
 	_check(sim.fish_per_tick(dock) == VillageSim.FISH_BASE_CATCH + 8, "open water out from the shore is richest")
@@ -1639,24 +1644,19 @@ func _test_boats_stay_on_water() -> void:
 	_check(pond.fishing_route(pond_dock) == ([pond_dock] as Array[Vector2i]), "boats don't go under bridges")
 
 
-## Food made by one workplace on the shore with two workers, over a long time.
-func _food_made(type: StringName) -> int:
+## A dock with two workers earns nearly 2 money a tick, so one dock pays for
+## the dearest attraction in a few minutes of fishing.
+func _test_docks_earn_steadily() -> void:
 	var sim := _lake_sim(2)
-	# Both doors are on the same shore cell, so the walk to work is the same.
-	sim.place(type, Vector2i(24, 20) if type == &"docks" else Vector2i(23, 19))
-	var made := 0
+	sim.place(&"docks", Vector2i(24, 20))
+	sim.food = 100000
+	sim.water = 100000
 	for i in range(2000):
-		var food := sim.food
 		sim.tick()
-		made += sim.food - food + (sim.population if sim.tick_count % VillageSim.MEAL_INTERVAL == 0 else 0)
-	return made
-
-
-func _test_docks_rival_farms() -> void:
-	var farm := _food_made(&"farm")
-	var docks := _food_made(&"docks")
-	var ratio := float(docks) / farm
-	_check(ratio > 0.9 and ratio < 1.2, "docks make about as much food as a farm: %d vs %d" % [docks, farm])
+	var per_tick := sim.money / 2000.0
+	_check(per_tick > 1.2 and per_tick < 3.0, "two fishers earn steadily: %f a tick" % per_tick)
+	var dearest: int = VillageSim.ATTRACTIONS.roller_coaster.cost.money
+	_check(dearest / per_tick < 240, "a roller coaster is within reach: %d ticks" % (dearest / per_tick))
 
 
 func _test_cut_short_shift_loses_the_catch() -> void:
@@ -1669,11 +1669,11 @@ func _test_cut_short_shift_loses_the_catch() -> void:
 			break
 	var villager := sim.villagers[0]
 	_check(villager.fish > 0, "the villager goes fishing")
-	var food := sim.food
+	var money := sim.money
 	sim.demolish(dock)
 	sim.tick()
 	_check(villager.fish == 0 and villager.state != Villager.State.WORKING, "losing the docks loses the catch")
-	_check(sim.food <= food, "and no food comes ashore")
+	_check(sim.money == money, "and nothing is sold")
 
 
 func _test_docks_save_and_play_on_identically() -> void:
@@ -1981,7 +1981,7 @@ func _test_happiness_survives_save_and_load() -> void:
 		sim.tick()
 	_check(sim.happiness.dragon_fear > 0 and sim.happiness.value != Happiness.START_VALUE, "happiness has moved")
 	var data := sim.to_save_data()
-	_check(data.version == 12, "saves are version 12")
+	_check(data.version == 13, "saves are version 13")
 	var loaded := VillageSim.from_save_data(JSON.parse_string(JSON.stringify(data)))
 	_check(loaded != null, "a game with happiness loads")
 	if loaded == null:
@@ -2027,22 +2027,24 @@ const PLAYGROUND := Vector2i(24, 20)
 func _test_building_attractions() -> void:
 	var sim := VillageSim.new(40, 40, 1, 1)
 	sim.wood = 100
-	sim.water = 0
+	_check(sim.money == 0, "a new village has no money")
+	sim.money = 89
 	_check(not sim.build_attraction(PLAYGROUND, &"darts"), "no attractions without an entrance")
 	_check(sim.place(&"playground", PLAYGROUND), "a playground entrance goes on grass")
-	_check(sim.wood == 75, "the entrance costs 25 wood")
+	_check(sim.wood == 75 and sim.money == 89, "the entrance costs 25 wood")
 	_check(sim.total_jobs() == 0 and sim.workplaces().is_empty(), "an empty playground has no jobs")
 	_check(sim.build_attraction(PLAYGROUND, &"darts"), "darts can be built")
-	_check(sim.wood == 55, "darts cost 20 wood: %d" % sim.wood)
+	_check(sim.money == 59 and sim.wood == 75, "darts cost 30 money and no wood: %d" % sim.money)
 	_check(not sim.can_build_attraction(PLAYGROUND, &"darts"), "only one darts per entrance")
-	_check(not sim.build_attraction(PLAYGROUND, &"darts") and sim.wood == 55, "a second darts costs nothing")
-	_check(not sim.build_attraction(PLAYGROUND, &"roller_coaster"), "a roller coaster costs too much")
+	_check(not sim.build_attraction(PLAYGROUND, &"darts") and sim.money == 59, "a second darts costs nothing")
+	_check(not sim.build_attraction(PLAYGROUND, &"arcade"), "an arcade costs too much")
 	_check(not sim.build_attraction(PLAYGROUND, &"rocket"), "unknown attractions can't be built")
-	sim.wood = 1000
-	_check(not sim.build_attraction(PLAYGROUND, &"water_slide"), "a water slide also needs water")
-	sim.water = 60
-	_check(sim.build_attraction(PLAYGROUND, &"water_slide"), "a water slide with water")
-	_check(sim.wood == 880 and sim.water == 0, "it costs 120 wood and 60 water")
+	sim.wood = 100000
+	sim.water = 100000
+	_check(not sim.build_attraction(PLAYGROUND, &"water_slide"), "wood and water don't pay for attractions")
+	sim.money = 240
+	_check(sim.build_attraction(PLAYGROUND, &"water_slide"), "a water slide with money")
+	_check(sim.money == 0 and sim.water == 100000, "it costs 240 money")
 	var built: Array[StringName] = [&"darts", &"water_slide"]
 	_check(sim.attractions_at(PLAYGROUND) == built, "attractions are listed in build order")
 	_check(sim.attraction_count() == 2, "two attractions")
@@ -2051,7 +2053,7 @@ func _test_building_attractions() -> void:
 	_check(sim.workplaces() == playgrounds, "a staffed playground is a workplace")
 	var previous_price := 0
 	for type: StringName in VillageSim.ATTRACTIONS:
-		var price: int = VillageSim.ATTRACTIONS[type].cost.wood
+		var price: int = VillageSim.ATTRACTIONS[type].cost.money
 		_check(price > previous_price, "attractions are listed cheapest first")
 		previous_price = price
 
@@ -2068,6 +2070,7 @@ func _fun_village(attractions: Array, people: int) -> VillageSim:
 	var sim := _settled(placements, people)
 	sim.wood = 100000
 	sim.water = 100000
+	sim.money = 100000
 	for type: StringName in attractions:
 		_check(sim.build_attraction(PLAYGROUND, type), "built %s" % type)
 	return sim
@@ -2201,9 +2204,9 @@ func _test_dragon_buries_attractions() -> void:
 	_check(sim.workers_at(PLAYGROUND) > 0, "staff come back")
 
 	_dragon_burns(sim, PLAYGROUND)
-	var wood := sim.wood
+	var money := sim.money
 	_check(sim.demolish(PLAYGROUND), "the ruin can be filled in")
-	_check(sim.wood == wood + 10 + 45, "filling in refunds half the attractions: %d" % (sim.wood - wood))
+	_check(sim.money == money + 15 + 80, "filling in refunds half the attractions: %d" % (sim.money - money))
 	_check(not sim.has_buried_attractions(PLAYGROUND) and sim.can_place(&"house", PLAYGROUND), "and frees the cell")
 	_check(not sim.demolish(PLAYGROUND), "nothing more to fill in")
 
@@ -2211,10 +2214,10 @@ func _test_dragon_buries_attractions() -> void:
 func _test_demolishing_a_playground() -> void:
 	var sim := _fun_village([&"arcade", &"water_slide"], 8)
 	var wood := sim.wood
-	var water := sim.water
+	var money := sim.money
 	_check(sim.demolish(PLAYGROUND), "a playground can be demolished")
-	_check(sim.wood == wood + 12 + 20 + 60, "half of the entrance and attractions back: %d" % (sim.wood - wood))
-	_check(sim.water == water + 30, "and half the water slide's water")
+	_check(sim.wood == wood + 12, "half of the entrance back: %d" % (sim.wood - wood))
+	_check(sim.money == money + 30 + 120, "and half the attractions: %d" % (sim.money - money))
 	_check(sim.attractions_at(PLAYGROUND).is_empty() and not sim.has_buried_attractions(PLAYGROUND), "the attractions are gone")
 	sim.place(&"playground", PLAYGROUND)
 	_check(sim.attractions_at(PLAYGROUND).is_empty(), "a new entrance starts empty")
@@ -2276,7 +2279,7 @@ func _test_older_saves_have_no_playgrounds() -> void:
 
 func _test_attractions_make_people_happier() -> void:
 	var sim := _settled({Vector2i(20, 20): &"house", Vector2i(20, 22): &"house", Vector2i(24, 20): &"playground"}, 8)
-	sim.wood = 10000
+	sim.money = 10000
 	var without := sim.happiness_factors()[&"entertainment"]
 	for attraction: StringName in VillageSim.ATTRACTIONS:
 		sim.build_attraction(Vector2i(24, 20), attraction)
@@ -2286,3 +2289,25 @@ func _test_attractions_make_people_happier() -> void:
 	_check(without == Happiness.NEUTRAL_SCORE, "no running attractions is neutral fun")
 	_check(sim.entertainment() > 0.0 and with_fun > without, "running attractions raise fun: %f" % with_fun)
 	_check(with_fun == Happiness.NEUTRAL_SCORE + (1.0 - Happiness.NEUTRAL_SCORE) * sim.entertainment(), "fun follows entertainment()")
+
+
+func _test_money_survives_save_and_load() -> void:
+	var sim := _lake_sim(2)
+	sim.place(&"docks", Vector2i(24, 20))
+	for i in range(100):
+		sim.tick()
+	_check(sim.money > 0, "fishing earned money: %d" % sim.money)
+	var data := sim.to_save_data()
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null and loaded.money == sim.money, "money comes back")
+	data.money = -1
+	_check(VillageSim.from_save_data(data) == null, "negative money is rejected")
+
+
+func _test_older_saves_have_no_money() -> void:
+	var sim := _lake_sim(2)
+	var data := sim.to_save_data()
+	data.version = VillageSim.FIRST_MONEY_VERSION - 1
+	data.money = 500
+	var loaded := VillageSim.from_save_data(data)
+	_check(loaded != null and loaded.money == 0, "saves from before money start with none")

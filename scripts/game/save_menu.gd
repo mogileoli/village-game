@@ -110,7 +110,7 @@ static func describe_slot(info: SaveGame.SlotInfo) -> String:
 	return "\n".join([
 		"Slot %d - %s" % [info.slot, info.name],
 		"Saved %s" % format_saved_time(info.saved_at),
-		"Wood %d   Food %d   Water %d" % [info.wood, info.food, info.water],
+		"Wood %d   Food %d   Water %d   Money %d" % [info.wood, info.food, info.water, info.money],
 		"People %d/%d   Jobs %d/%d   Buildings %d" % [
 			info.population, info.housing, info.filled_jobs, info.total_jobs, info.buildings,
 		],

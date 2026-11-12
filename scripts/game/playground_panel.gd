@@ -74,8 +74,8 @@ func refresh() -> void:
 	for type in built:
 		hired += staff[type].x
 		needed += VillageSim.ATTRACTIONS[type].staff
-	_summary.text = "Attractions %d/%d   Staff %d/%d   Village fun %d/100" % [
-		built.size(), VillageSim.ATTRACTIONS.size(), hired, needed, roundi(_sim.entertainment() * 100),
+	_summary.text = "Money %d   Attractions %d/%d   Staff %d/%d   Village fun %d/100" % [
+		_sim.money, built.size(), VillageSim.ATTRACTIONS.size(), hired, needed, roundi(_sim.entertainment() * 100),
 	]
 	for child in _rows.get_children():
 		_rows.remove_child(child)

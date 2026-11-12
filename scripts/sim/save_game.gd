@@ -25,6 +25,7 @@ class SlotInfo:
 	var wood := 0
 	var food := 0
 	var water := 0
+	var money := 0
 	var population := 0
 	var housing := 0
 	var filled_jobs := 0
@@ -89,6 +90,7 @@ static func slot_info(slot: int) -> SlotInfo:
 	info.wood = sim.wood
 	info.food = sim.food
 	info.water = sim.water
+	info.money = sim.money
 	info.population = sim.population
 	info.housing = sim.housing()
 	info.filled_jobs = sim.filled_jobs()

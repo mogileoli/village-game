@@ -19,6 +19,7 @@
 [ext_resource type="Script" path="res://scripts/game/hero_creator.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/game/boats_view.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/game/playground_panel.gd" id="19"]
+[ext_resource type="Texture2D" path="res://assets/ui/icon_money.png" id="20"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -117,7 +118,7 @@ stretch_mode = 3
 
 [node name="Wood" type="Label" parent="HUD/StatsRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(40, 0)
+custom_minimum_size = Vector2(34, 0)
 layout_mode = 2
 
 [node name="FoodIcon" type="TextureRect" parent="HUD/StatsRow"]
@@ -127,7 +128,7 @@ stretch_mode = 3
 
 [node name="Food" type="Label" parent="HUD/StatsRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(40, 0)
+custom_minimum_size = Vector2(34, 0)
 layout_mode = 2
 
 [node name="WaterIcon" type="TextureRect" parent="HUD/StatsRow"]
@@ -137,7 +138,17 @@ stretch_mode = 3
 
 [node name="Water" type="Label" parent="HUD/StatsRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(40, 0)
+custom_minimum_size = Vector2(34, 0)
+layout_mode = 2
+
+[node name="MoneyIcon" type="TextureRect" parent="HUD/StatsRow"]
+layout_mode = 2
+texture = ExtResource("20")
+stretch_mode = 3
+
+[node name="Money" type="Label" parent="HUD/StatsRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(34, 0)
 layout_mode = 2
 
 [node name="PeopleIcon" type="TextureRect" parent="HUD/StatsRow"]

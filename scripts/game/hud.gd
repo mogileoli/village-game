@@ -65,6 +65,7 @@ var _happiness_pinned := false
 @onready var _wood: Label = %Wood
 @onready var _food: Label = %Food
 @onready var _water: Label = %Water
+@onready var _money: Label = %Money
 @onready var _people: Label = %People
 @onready var _jobs: Label = %Jobs
 @onready var _fighters: Label = %Fighters
@@ -130,6 +131,7 @@ func show_stats(sim: VillageSim, speed: int) -> void:
 	_wood.text = str(sim.wood)
 	_food.text = str(sim.food)
 	_water.text = str(sim.water)
+	_money.text = str(sim.money)
 	_people.text = "%d/%d" % [sim.population, sim.housing()]
 	_jobs.text = "Jobs %d/%d" % [sim.filled_jobs(), sim.total_jobs()]
 	_fighters.text = str(sim.fighter_count())
